@@ -19,7 +19,7 @@ BOT_MODE = "webhook"
 # ============================================
 # 2. SERVER & DEPLOYMENT (Render)
 # ============================================
-RENDER_EXTERNAL_URL = "https://proxyapi-89pj.onrender.com"  # Apna actual Render URL daalo
+RENDER_EXTERNAL_URL = "https://null-protocol-store.onrender.com"  # Apna actual Render URL daalo
 PORT = 8080
 
 # ============================================
@@ -80,7 +80,7 @@ API_ENDPOINTS = {
     "num": {
         "name": "Phone Number Info",
         "description": "Get basic information about a phone number",
-        "url_template": "https://ayaanmods.site/number.php?key=annonymous&number={param}",
+        "url_template": "https://ayaanmods.site/number.php?key={api_key}&number={param}",
         "external_api_key": "annonymous",  # Original API key
         "param_name": "number",
         "param_example": "9876543210",
@@ -98,8 +98,8 @@ API_ENDPOINTS = {
     "tg": {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
-        "url_template": "https://multi-endpoint-rootxindia.satyamrajsingh49.workers.dev/tgnum?key=demo&term={param}",
-        "external_api_key": "Premium_User",  # Original API key
+        "url_template": "https://multi-endpoint-rootxindia.satyamrajsingh49.workers.dev/tgnum?key={api_key}&term={param}",
+        "external_api_key": "demo",  # Original API key
         "param_name": "username",
         "param_example": "7445701268",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
