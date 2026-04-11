@@ -97,10 +97,10 @@ API_ENDPOINTS = {
     "tg": {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
-        "url_template": "https://multi-endpoint-rootxindia.satyamrajsingh49.workers.dev/tgnum?key={api_key}&term={param}",
-        "external_api_key": os.getenv("TG_API_KEY", "demo"),
+        "url_template": "https://sbsakib.eu.cc/api/Tg_username/?key={api_key}&username={param}",
+        "external_api_key": os.getenv("TG_API_KEY", "Premium_User"),
         "param_name": "username",
-        "param_example": "7445701268",
+        "param_example": "@InvalidAnand",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "extra_blacklist": [
             "developer",
