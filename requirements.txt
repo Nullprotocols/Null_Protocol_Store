@@ -1,0 +1,14 @@
+# Core Async Framework & Server
+Quart==0.19.6
+hypercorn==0.17.3
+aiohttp==3.9.5
+
+# Telegram Bot (PTB v21 with async support)
+python-telegram-bot==21.10
+
+# Async Database
+aiosqlite==0.20.0
+
+# Utilities
+python-dotenv==1.0.0
+tenacity==8.3.0
