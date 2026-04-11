@@ -88,7 +88,8 @@ API_ENDPOINTS = {
             "channel_name",
             "owner",
             "channel_link",
-            "branding"
+            "branding",
+            "API_Developer"
         ],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
