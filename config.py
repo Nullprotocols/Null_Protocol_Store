@@ -1,56 +1,55 @@
-# config.py - FINAL COMPLETE VERSION - NO EDIT REQUIRED EXCEPT BOT TOKEN
+# config.py - ENVIRONMENT VARIABLES READY (NO CODE EDIT REQUIRED)
 
 import os
 
 # ============================================
-# 1. TELEGRAM BOT CREDENTIALS (ONLY THIS LINE NEEDS YOUR TOKEN)
+# 1. TELEGRAM BOT CREDENTIALS (FROM ENV)
 # ============================================
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # <--- BAS YAHAN APNA BOT TOKEN DAALO, BAAKI SAB READY HAI
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN environment variable is missing!")
 
-# Main Owner ID (jo sab kuch control karega)
-OWNER_ID = 8104850843
+OWNER_ID = int(os.getenv("OWNER_ID", "8104850843"))
 
-# Webhook Secret (internal security)
-WEBHOOK_SECRET = "NullProtocol_SuperSecret_2024"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "NullProtocol_SuperSecret_2024")
 
-# Bot running mode: "polling" ya "webhook" (webhook recommended for speed)
-BOT_MODE = "webhook"
+BOT_MODE = os.getenv("BOT_MODE", "webhook")
 
 # ============================================
 # 2. SERVER & DEPLOYMENT (Render)
 # ============================================
-RENDER_EXTERNAL_URL = "https://null-protocol-store.onrender.com"
-PORT = 8080
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://null-protocol-store.onrender.com")
+PORT = int(os.getenv("PORT", "8080"))
 
 # ============================================
 # 3. DATABASE
 # ============================================
-DB_FILE = "bot.db"
+DB_FILE = os.getenv("DB_FILE", "bot.db")
 
 # ============================================
-# 4. CACHE CONFIGURATION (In-Memory Fast Cache)
+# 4. CACHE CONFIGURATION
 # ============================================
-REDIS_URL = None  # Redis nahi use karna to None rakho
-CACHE_TTL = 300  # 5 minutes
+REDIS_URL = os.getenv("REDIS_URL", None)
+CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
 
 # ============================================
-# 5. AUTO-PING (Keep Alive) - Har 4 Minute
+# 5. AUTO-PING
 # ============================================
-SELF_PING_INTERVAL = 240
-ENABLE_SELF_PING = True
+SELF_PING_INTERVAL = int(os.getenv("SELF_PING_INTERVAL", "240"))
+ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
 
 # ============================================
-# 6. BRANDING (Jo har API response mein dikhega)
+# 6. BRANDING
 # ============================================
 BRANDING = {
-    "developer": "@Nullprotocol_x",
-    "powered_by": "NULL PROTOCOL",
-    "support": "@Nullprotocol_x",
+    "developer": os.getenv("BRANDING_DEVELOPER", "@Nullprotocol_x"),
+    "powered_by": os.getenv("BRANDING_POWERED", "NULL PROTOCOL"),
+    "support": os.getenv("BRANDING_SUPPORT", "@Nullprotocol_x"),
     "website": "https://t.me/Nullprotocol_x"
 }
 
 # ============================================
-# 7. GLOBAL BLACKLIST (Sabhi API responses se yeh fields hata diye jayenge)
+# 7. GLOBAL BLACKLIST
 # ============================================
 GLOBAL_BLACKLIST = [
     "copyright",
@@ -60,7 +59,7 @@ GLOBAL_BLACKLIST = [
 ]
 
 # ============================================
-# 8. FORCE JOIN CHANNELS (Jinhe join karna compulsory hai)
+# 8. FORCE JOIN CHANNELS
 # ============================================
 FORCE_JOIN_CHANNELS = [
     {"id": -1003090922367, "link": "https://t.me/all_data_here", "name": "All Data Here"},
@@ -69,19 +68,19 @@ FORCE_JOIN_CHANNELS = [
 ]
 
 # ============================================
-# 9. LOG CHANNEL (Jahan API key generation logs jayenge)
+# 9. LOG CHANNEL
 # ============================================
-LOG_CHANNEL_ID = -1003624886596
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
 # ============================================
-# 10. API ENDPOINTS CONFIGURATION (Number Info + Telegram to Number)
+# 10. API ENDPOINTS CONFIGURATION
 # ============================================
 API_ENDPOINTS = {
     "num": {
         "name": "Phone Number Info",
         "description": "Get basic information about a phone number",
         "url_template": "https://ayaanmods.site/number.php?key={api_key}&number={param}",
-        "external_api_key": "annonymous",
+        "external_api_key": os.getenv("NUM_API_KEY", "annonymous"),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
@@ -92,14 +91,14 @@ API_ENDPOINTS = {
             "branding"
         ],
         "rate_limit_per_min": 80,
-        "log_channel": -1003624886596,
+        "log_channel": LOG_CHANNEL_ID,
         "enabled": True
     },
     "tg": {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
         "url_template": "https://multi-endpoint-rootxindia.satyamrajsingh49.workers.dev/tgnum?key={api_key}&term={param}",
-        "external_api_key": "demo",
+        "external_api_key": os.getenv("TG_API_KEY", "demo"),
         "param_name": "username",
         "param_example": "7445701268",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
@@ -110,13 +109,13 @@ API_ENDPOINTS = {
             "key_status"
         ],
         "rate_limit_per_min": 80,
-        "log_channel": -1003624886596,
+        "log_channel": LOG_CHANNEL_ID,
         "enabled": True
     }
 }
 
 # ============================================
-# 11. API PLANS & PRICING (Credits)
+# 11. API PLANS & PRICING
 # ============================================
 DEFAULT_PLANS = {
     "num": {
@@ -132,32 +131,32 @@ DEFAULT_PLANS = {
 # ============================================
 # 12. REFERRAL SYSTEM
 # ============================================
-REFERRAL_REWARD_CREDITS = 3
+REFERRAL_REWARD_CREDITS = int(os.getenv("REFERRAL_REWARD_CREDITS", "3"))
 
 # ============================================
 # 13. PREMIUM USER SETTINGS
 # ============================================
-PREMIUM_EXEMPT_FORCE_JOIN = False
+PREMIUM_EXEMPT_FORCE_JOIN = os.getenv("PREMIUM_EXEMPT_FORCE_JOIN", "False").lower() == "true"
 
 # ============================================
 # 14. ADMIN / OWNER CONTACT
 # ============================================
-OWNER_USERNAME = "@Nullprotocol_x"
-SUPPORT_USERNAME = "@Nullprotocol_x"
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Nullprotocol_x")
+SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Nullprotocol_x")
 
 # ============================================
 # 15. RATE LIMITING
 # ============================================
-DEFAULT_RATE_LIMIT_PER_MIN = 80
+DEFAULT_RATE_LIMIT_PER_MIN = int(os.getenv("DEFAULT_RATE_LIMIT", "80"))
 
 # ============================================
 # 16. DEBUG & LOGGING
 # ============================================
-DEBUG = False
-LOG_LEVEL = "INFO"
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # ============================================
-# PRINT CONFIRMATION (Bot start hote hi dikhega)
+# PRINT CONFIRMATION
 # ============================================
 print("✅ CONFIG LOADED - NULL PROTOCOL API BOT")
 print(f"🚀 Bot Mode: {BOT_MODE.upper()}")
