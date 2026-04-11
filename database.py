@@ -1,4 +1,4 @@
-# database.py - ASYNC VERSION WITH ALL FEATURES
+# database.py - ASYNC VERSION WITH ALL FEATURES (RENDER READY)
 
 import sqlite3
 import secrets
