@@ -1,11 +1,11 @@
-# config.py - COMPLETE PRODUCTION READY - NO ENV FILE NEEDED
+# config.py - FINAL COMPLETE VERSION - NO EDIT REQUIRED EXCEPT BOT TOKEN
 
 import os
 
 # ============================================
 # 1. TELEGRAM BOT CREDENTIALS (ONLY THIS LINE NEEDS YOUR TOKEN)
 # ============================================
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # <--- BAS YAHAN APNA BOT TOKEN DAALO
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # <--- BAS YAHAN APNA BOT TOKEN DAALO, BAAKI SAB READY HAI
 
 # Main Owner ID (jo sab kuch control karega)
 OWNER_ID = 8104850843
@@ -19,7 +19,7 @@ BOT_MODE = "webhook"
 # ============================================
 # 2. SERVER & DEPLOYMENT (Render)
 # ============================================
-RENDER_EXTERNAL_URL = "https://null-protocol-store.onrender.com"  # Apna actual Render URL daalo
+RENDER_EXTERNAL_URL = "https://null-protocol-store.onrender.com"
 PORT = 8080
 
 # ============================================
@@ -81,7 +81,7 @@ API_ENDPOINTS = {
         "name": "Phone Number Info",
         "description": "Get basic information about a phone number",
         "url_template": "https://ayaanmods.site/number.php?key={api_key}&number={param}",
-        "external_api_key": "annonymous",  # Original API key
+        "external_api_key": "annonymous",
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
@@ -99,7 +99,7 @@ API_ENDPOINTS = {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
         "url_template": "https://multi-endpoint-rootxindia.satyamrajsingh49.workers.dev/tgnum?key={api_key}&term={param}",
-        "external_api_key": "demo",  # Original API key
+        "external_api_key": "demo",
         "param_name": "username",
         "param_example": "7445701268",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
@@ -132,12 +132,12 @@ DEFAULT_PLANS = {
 # ============================================
 # 12. REFERRAL SYSTEM
 # ============================================
-REFERRAL_REWARD_CREDITS = 3  # Referrer ko milne wale credits
+REFERRAL_REWARD_CREDITS = 3
 
 # ============================================
 # 13. PREMIUM USER SETTINGS
 # ============================================
-PREMIUM_EXEMPT_FORCE_JOIN = False  # Premium users ko force join se chhut chahiye to True karein
+PREMIUM_EXEMPT_FORCE_JOIN = False
 
 # ============================================
 # 14. ADMIN / OWNER CONTACT
