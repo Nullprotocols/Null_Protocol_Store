@@ -1,4 +1,4 @@
-# main.py - QUART + PTB 21.x ASYNC - ALL FEATURES FULLY IMPLEMENTED
+# main.py - QUART + PTB 21.x ASYNC - ALL FEATURES FULLY IMPLEMENTED (RENDER READY)
 
 import json
 import asyncio
@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # ============================================
 app = Quart(__name__)
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
+app.config['PROVIDE_AUTOMATIC_OPTIONS'] = True   # Fix for Flask/Quart compatibility
 
 # In-memory cache (fallback if no Redis)
 cache: Dict[str, Tuple[float, any]] = {}  # key: (timestamp, data)
@@ -126,7 +127,7 @@ async def proxy_api(api_type):
     now = time.time()
     if rate_key in cache:
         count, window_start = cache[rate_key]
-        if now - window_start > 80:
+        if now - window_start > 60:
             count = 1
             cache[rate_key] = (count, now)
         else:
@@ -432,7 +433,7 @@ async def mykeys_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "You have no API keys."
     else:
         text = "<b>Your API Keys:</b>\n\n"
-        for k in keys[:5]:  # show max 5
+        for k in keys[:5]:
             text += f"<code>{k[0]}</code> | Exp: {k[1][:10]} | {'✅' if k[4] else '❌'}\n"
     await query.edit_message_text(text, parse_mode='HTML',
                                   reply_markup=InlineKeyboardMarkup([[back_button("menu_start")]]))
@@ -504,7 +505,7 @@ async def redeem_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                   reply_markup=InlineKeyboardMarkup([[back_button("menu_start")]]))
 
 # ============================================
-# ADMIN PANEL HANDLERS (FULLY IMPLEMENTED)
+# ADMIN PANEL HANDLERS
 # ============================================
 async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -580,7 +581,7 @@ async def show_user_list(update: Update, context: ContextTypes.DEFAULT_TYPE, pag
     offset = page * limit
     users = await get_users_paginated(offset, limit)
     total = await count_users()
-    pages = (total + limit - 1) // limit
+    pages = (total + limit - 1) // limit if total > 0 else 1
     text = f"👥 <b>User List (Page {page+1}/{pages})</b>\n\n"
     keyboard = []
     for u in users:
@@ -589,6 +590,18 @@ async def show_user_list(update: Update, context: ContextTypes.DEFAULT_TYPE, pag
         status = "🚫" if banned else ("⭐" if premium else "✅")
         btn = InlineKeyboardButton(f"{status} {name} | 💰{credits}", callback_data=f"userdetail_{uid}")
         keyboard.append([btn])
+        # Add quick action buttons for each user
+        action_row = []
+        if not banned:
+            action_row.append(InlineKeyboardButton("🚫 Ban", callback_data=f"toggle_ban_{uid}"))
+        else:
+            action_row.append(InlineKeyboardButton("✅ Unban", callback_data=f"toggle_ban_{uid}"))
+        action_row.append(InlineKeyboardButton("💳 Add Credits", callback_data=f"add_credits_{uid}"))
+        if premium:
+            action_row.append(InlineKeyboardButton("⭐ Remove Premium", callback_data=f"remove_premium_{uid}"))
+        else:
+            action_row.append(InlineKeyboardButton("⭐ Make Premium", callback_data=f"make_premium_{uid}"))
+        keyboard.append(action_row)
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"userlist_page_{page-1}"))
@@ -620,6 +633,8 @@ async def show_premium_list(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         name = first_name or str(uid)
         btn = InlineKeyboardButton(f"{name} | Exp: {expiry[:10] if expiry else 'Permanent'}", callback_data=f"premdetail_{uid}")
         keyboard.append([btn])
+        action_row = [InlineKeyboardButton("❌ Remove Premium", callback_data=f"remove_premium_{uid}")]
+        keyboard.append(action_row)
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"premiumlist_page_{page-1}"))
@@ -691,6 +706,48 @@ async def show_keys_list(update: Update, context: ContextTypes.DEFAULT_TYPE, pag
 async def paginated_keys_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     page = int(update.callback_query.data.split('_')[-1])
     await show_keys_list(update, context, page)
+
+# ============================================
+# SPECIFIC ACTION HANDLERS (Toggle Ban, Add Credits, Premium)
+# ============================================
+async def toggle_ban_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = int(query.data.split('_')[-1])
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("UPDATE users SET is_banned = NOT is_banned WHERE user_id=?", (uid,))
+        await db.commit()
+        cur = await db.execute("SELECT is_banned FROM users WHERE user_id=?", (uid,))
+        banned = (await cur.fetchone())[0]
+    await query.answer(f"User {'banned' if banned else 'unbanned'} successfully.", show_alert=True)
+    # Refresh the user list (return to same page if possible)
+    await show_user_list(update, context, page=0)
+
+async def add_credits_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = int(query.data.split('_')[-1])
+    context.user_data['target_user'] = uid
+    context.user_data['admin_state'] = 'awaiting_credit_amount'
+    await query.edit_message_text(f"Send amount of credits to add for user {uid}:",
+                                  reply_markup=InlineKeyboardMarkup([[back_button("admin_users")]]))
+
+async def remove_premium_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = int(query.data.split('_')[-1])
+    await remove_premium(uid)
+    await query.answer("Premium removed.", show_alert=True)
+    await show_premium_list(update, context, page=0)
+
+async def make_premium_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = int(query.data.split('_')[-1])
+    context.user_data['target_premium_user'] = uid
+    context.user_data['admin_state'] = 'awaiting_premium_days'
+    await query.edit_message_text(f"Send number of days for premium (or 'permanent'):",
+                                  reply_markup=InlineKeyboardMarkup([[back_button("admin_premium")]]))
 
 # ============================================
 # MESSAGE HANDLERS FOR ADMIN STATES & REDEEM
@@ -807,7 +864,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_price = int(text)
             api = context.user_data['pricing_api']
             plan = context.user_data['pricing_plan']
-            days = 7 if plan == 'weekly' else 30
             async with aiosqlite.connect(DB_FILE) as db:
                 await db.execute("UPDATE api_plans SET price_credits=? WHERE api_type=? AND plan_name=?", (new_price, api, plan))
                 await db.commit()
@@ -815,6 +871,21 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('admin_state', None)
         except:
             await update.message.reply_text("Invalid number.")
+    elif state == 'awaiting_premium_days':
+        days_text = text.lower()
+        uid = context.user_data.pop('target_premium_user')
+        if days_text == 'permanent':
+            await set_premium(uid, days=None)
+        else:
+            try:
+                days = int(days_text)
+                await set_premium(uid, days=days)
+            except:
+                await update.message.reply_text("Invalid number. Cancelled.")
+                context.user_data.pop('admin_state', None)
+                return
+        await update.message.reply_text(f"✅ Premium set for user {uid}.")
+        context.user_data.pop('admin_state', None)
 
 # ============================================
 # MEDIA BROADCAST HANDLER
@@ -912,6 +983,10 @@ application.add_handler(CallbackQueryHandler(paginated_user_list, pattern="^user
 application.add_handler(CallbackQueryHandler(paginated_premium_list, pattern="^premiumlist_page_"))
 application.add_handler(CallbackQueryHandler(paginated_admin_list, pattern="^adminlist_page_"))
 application.add_handler(CallbackQueryHandler(paginated_keys_list, pattern="^keys_page_"))
+application.add_handler(CallbackQueryHandler(toggle_ban_handler, pattern="^toggle_ban_"))
+application.add_handler(CallbackQueryHandler(add_credits_prompt, pattern="^add_credits_"))
+application.add_handler(CallbackQueryHandler(remove_premium_handler, pattern="^remove_premium_"))
+application.add_handler(CallbackQueryHandler(make_premium_prompt, pattern="^make_premium_"))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_broadcast_media))
 
