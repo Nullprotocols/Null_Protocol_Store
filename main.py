@@ -1,4 +1,4 @@
-# main.py - QUART + PTB 21.x ASYNC - ALL FEATURES FULLY IMPLEMENTED (RENDER READY)
+# main.py - QUART + PTB 21.x ASYNC - ALL FEATURES + WEBHOOK ROUTE FIXED
 
 import json
 import asyncio
@@ -40,14 +40,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# QUART APP (For Proxy API)
+# QUART APP (For Proxy API + Telegram Webhook)
 # ============================================
 app = Quart(__name__)
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
-app.config['PROVIDE_AUTOMATIC_OPTIONS'] = True   # Fix for Flask/Quart compatibility
+app.config['PROVIDE_AUTOMATIC_OPTIONS'] = True
 
 # In-memory cache (fallback if no Redis)
-cache: Dict[str, Tuple[float, any]] = {}  # key: (timestamp, data)
+cache: Dict[str, Tuple[float, any]] = {}
 
 # Global aiohttp session for external API calls
 http_session: Optional[aiohttp.ClientSession] = None
@@ -122,7 +122,7 @@ async def proxy_api(api_type):
         if not await has_active_subscription(user_id, api_type):
             return jsonify({"error": f"No active subscription for {api_type.upper()} API."}), 403
 
-    # Rate limiting (simple in-memory per key)
+    # Rate limiting
     rate_key = f"rate_{key}"
     now = time.time()
     if rate_key in cache:
@@ -172,6 +172,26 @@ async def proxy_api(api_type):
     await set_cached(cache_key, pretty_json)
 
     return app.response_class(response=pretty_json, status=200, mimetype='application/json')
+
+# ============================================
+# TELEGRAM WEBHOOK ROUTE (THIS WAS MISSING!)
+# ============================================
+@app.route('/webhook', methods=['POST'])
+async def telegram_webhook():
+    """Handle incoming Telegram updates via webhook."""
+    # Verify secret token for security
+    if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET:
+        logger.warning("Unauthorized webhook attempt")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        data = await request.get_json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Webhook processing error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # ============================================
 # TELEGRAM BOT - KEYBOARD BUILDERS
@@ -264,7 +284,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_user = await get_user(user_id)
     await update_user_info(user_id, user.username, user.first_name, user.last_name)
 
-    # Referral handling
     if context.args and context.args[0].startswith('ref_'):
         try:
             referrer_id = int(context.args[0][4:])
@@ -590,7 +609,6 @@ async def show_user_list(update: Update, context: ContextTypes.DEFAULT_TYPE, pag
         status = "🚫" if banned else ("⭐" if premium else "✅")
         btn = InlineKeyboardButton(f"{status} {name} | 💰{credits}", callback_data=f"userdetail_{uid}")
         keyboard.append([btn])
-        # Add quick action buttons for each user
         action_row = []
         if not banned:
             action_row.append(InlineKeyboardButton("🚫 Ban", callback_data=f"toggle_ban_{uid}"))
@@ -708,7 +726,7 @@ async def paginated_keys_list(update: Update, context: ContextTypes.DEFAULT_TYPE
     await show_keys_list(update, context, page)
 
 # ============================================
-# SPECIFIC ACTION HANDLERS (Toggle Ban, Add Credits, Premium)
+# SPECIFIC ACTION HANDLERS
 # ============================================
 async def toggle_ban_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -720,7 +738,6 @@ async def toggle_ban_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cur = await db.execute("SELECT is_banned FROM users WHERE user_id=?", (uid,))
         banned = (await cur.fetchone())[0]
     await query.answer(f"User {'banned' if banned else 'unbanned'} successfully.", show_alert=True)
-    # Refresh the user list (return to same page if possible)
     await show_user_list(update, context, page=0)
 
 async def add_credits_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -756,7 +773,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # Redeem code handling
     if context.user_data.get('awaiting_redeem'):
         context.user_data.pop('awaiting_redeem')
         success = await redeem_code(user_id, text)
@@ -766,7 +782,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Invalid or expired code.")
         return
 
-    # Admin state handling
     if not await is_admin(user_id):
         return
 
