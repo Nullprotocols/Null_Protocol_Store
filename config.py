@@ -79,17 +79,13 @@ API_ENDPOINTS = {
     "num": {
         "name": "Phone Number Info",
         "description": "Get basic information about a phone number",
-        "url_template": "https://ayaanmods.site/number.php?key={api_key}&number={param}",
-        "external_api_key": os.getenv("NUM_API_KEY", "annonymous"),
+        "url_template": "https://store.abdulstoreapi.workers.dev/api/v1?key={api_key}&num={param}",
+        "external_api_key": os.getenv("NUM_API_KEY", "ak_73be4bb78f617ab2ade18663c90b31b1"),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
         "extra_blacklist": [
-            "channel_name",
-            "owner",
-            "channel_link",
-            "branding",
-            "API_Developer"
+            "credits"
         ],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
@@ -98,16 +94,16 @@ API_ENDPOINTS = {
     "tg": {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
-        "url_template": "https://sbsakib.eu.cc/api/Tg_username/?key={api_key}&username={param}",
-        "external_api_key": os.getenv("TG_API_KEY", "Premium_User"),
+        "url_template": "https://sbsakib.eu.cc/apis/tg_username?key={api_key}&user={param}",
+        "external_api_key": os.getenv("TG_API_KEY", "Demo"),
         "param_name": "username",
         "param_example": "@InvalidAnand",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "extra_blacklist": [
-            "developer",
-            "owner",
-            "success",
-            "key_status"
+            "is_verified", "id", "has_profile_pic", "first_name",
+            "is_scam", "credit", "common_chats", "bio", "username", "target", 
+            "is_fake", "type", "public_view",
+            "is_bot"
         ],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
