@@ -198,12 +198,12 @@ async def telegram_webhook():
 # ============================================
 def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton("🔑 Generate Key", callback_data="menu_genkey")],
-        [InlineKeyboardButton("📘 API Docs", callback_data="menu_apihelp")],
-        [InlineKeyboardButton("👤 My Keys", callback_data="menu_mykeys")],
-        [InlineKeyboardButton("💰 Balance & Plans", callback_data="menu_balance")],
-        [InlineKeyboardButton("🔗 Referral", callback_data="menu_referral")],
-        [InlineKeyboardButton("🎟️ Redeem Code", callback_data="menu_redeem")],
+        [InlineKeyboardButton("🔑 Generate Key", callback_data="menu_genkey"),
+        InlineKeyboardButton("📘 API Docs", callback_data="menu_apihelp")],
+        [InlineKeyboardButton("👤 My Keys", callback_data="menu_mykeys"),
+        InlineKeyboardButton("💰 Balance & Plans", callback_data="menu_balance")],
+        [InlineKeyboardButton("🔗 Referral", callback_data="menu_referral"),
+        InlineKeyboardButton("🎟️ Redeem Code", callback_data="menu_redeem")],
     ]
     if is_admin:
         buttons.append([InlineKeyboardButton("🛡️ Admin Panel", callback_data="menu_admin")])
@@ -211,16 +211,16 @@ def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 def admin_panel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 User Management", callback_data="admin_users")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("🔑 All API Keys", callback_data="admin_keys")],
-        [InlineKeyboardButton("💳 Add Credits", callback_data="admin_addcredits")],
-        [InlineKeyboardButton("⭐ Premium Users", callback_data="admin_premium")],
-        [InlineKeyboardButton("🎟️ Gen Redeem Code", callback_data="admin_genredeem")],
-        [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_admins")],
-        [InlineKeyboardButton("📊 Stats", callback_data="admin_stats")],
-        [InlineKeyboardButton("⚙️ Set Pricing", callback_data="admin_pricing")],
-        [InlineKeyboardButton("📨 DM User", callback_data="admin_dm")],
+        [InlineKeyboardButton("👥 User Management", callback_data="admin_users"),
+        InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🔑 All API Keys", callback_data="admin_keys"),
+        InlineKeyboardButton("💳 Add Credits", callback_data="admin_addcredits")],
+        [InlineKeyboardButton("⭐ Premium Users", callback_data="admin_premium"),
+        InlineKeyboardButton("🎟️ Gen Redeem Code", callback_data="admin_genredeem")],
+        [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_admins"),
+        InlineKeyboardButton("📊 Stats", callback_data="admin_stats")],
+        [InlineKeyboardButton("⚙️ Set Pricing", callback_data="admin_pricing"),
+        InlineKeyboardButton("📨 DM User", callback_data="admin_dm")],
         [InlineKeyboardButton("📨 Bulk DM", callback_data="admin_bulkdm")],
         [InlineKeyboardButton("❌ Close", callback_data="close_panel")]
     ])
