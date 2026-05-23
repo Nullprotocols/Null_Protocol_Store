@@ -1,4 +1,4 @@
-# config.py - FINAL PRODUCTION VERSION (PostgreSQL + Backup + Custom Keys)
+# config.py - FINAL PRODUCTION VERSION (PostgreSQL + Backup + Custom Keys + All Features)
 
 import os
 
@@ -14,35 +14,35 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "NullProtocol_SuperSecret_2024")
 BOT_MODE = os.getenv("BOT_MODE", "webhook")
 
 # ------------------------------------------------------------
-# 2. SERVER
+# 2. SERVER & DEPLOYMENT (Render)
 # ------------------------------------------------------------
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://null-protocol-store.onrender.com")
 PORT = int(os.getenv("PORT", "8080"))
 
 # ------------------------------------------------------------
-# 3. DATABASE (PostgreSQL) – internal URL from env
+# 3. DATABASE (PostgreSQL - Render internal URL)
 # ------------------------------------------------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("❌ DATABASE_URL missing! Set the internal PostgreSQL URL.")
-# Convert postgres:// to postgresql:// for asyncpg
+# asyncpg prefers "postgresql://" scheme
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # ------------------------------------------------------------
-# 4. CACHE (in-memory or Redis optional)
+# 4. CACHE CONFIGURATION (In-memory cache, Redis optional)
 # ------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", None)
 CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
 
 # ------------------------------------------------------------
-# 5. AUTO-PING (keep alive)
+# 5. AUTO-PING (Keep Render alive)
 # ------------------------------------------------------------
 SELF_PING_INTERVAL = int(os.getenv("SELF_PING_INTERVAL", "240"))
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
 
 # ------------------------------------------------------------
-# 6. BRANDING
+# 6. BRANDING (API response footer)
 # ------------------------------------------------------------
 BRANDING = {
     "developer": os.getenv("BRANDING_DEVELOPER", "@Nullprotocol_x"),
@@ -52,7 +52,7 @@ BRANDING = {
 }
 
 # ------------------------------------------------------------
-# 7. GLOBAL BLACKLIST (branding removal)
+# 7. GLOBAL BLACKLIST (Fields to strip from upstream API)
 # ------------------------------------------------------------
 GLOBAL_BLACKLIST = [
     "copyright", "signature", "credit", "source"
@@ -68,12 +68,12 @@ FORCE_JOIN_CHANNELS = [
 ]
 
 # ------------------------------------------------------------
-# 9. LOG CHANNEL
+# 9. LOG CHANNEL (Where key generation logs are sent)
 # ------------------------------------------------------------
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
 # ------------------------------------------------------------
-# 10. API ENDPOINTS (Phone & Telegram Username)
+# 10. API ENDPOINTS (Phone number & Telegram username)
 # ------------------------------------------------------------
 API_ENDPOINTS = {
     "num": {
@@ -133,18 +133,18 @@ REFERRAL_REWARD_CREDITS = int(os.getenv("REFERRAL_REWARD_CREDITS", "3"))
 PREMIUM_EXEMPT_FORCE_JOIN = os.getenv("PREMIUM_EXEMPT_FORCE_JOIN", "False").lower() == "true"
 
 # ------------------------------------------------------------
-# 14. CONTACTS
+# 14. CONTACTS (Shown in bot)
 # ------------------------------------------------------------
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Nullprotocol_x")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Nullprotocol_x")
 
 # ------------------------------------------------------------
-# 15. DEFAULT RATE LIMIT
+# 15. DEFAULT RATE LIMIT (for new API keys)
 # ------------------------------------------------------------
 DEFAULT_RATE_LIMIT_PER_MIN = int(os.getenv("DEFAULT_RATE_LIMIT", "80"))
 
 # ------------------------------------------------------------
-# 16. BACKUP SETTINGS (24hr CSV to owner DM)
+# 16. BACKUP SETTINGS (Daily CSV to owner DM)
 # ------------------------------------------------------------
 BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))  # default: owner DM
