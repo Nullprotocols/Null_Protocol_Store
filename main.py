@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 from config import *
 from database import *
+import database  
 
 # Logging
 logging.basicConfig(
