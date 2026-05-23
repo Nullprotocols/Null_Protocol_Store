@@ -16,7 +16,7 @@ BOT_MODE = os.getenv("BOT_MODE", "webhook")
 # ------------------------------------------------------------
 # 2. SERVER & DEPLOYMENT (Render)
 # ------------------------------------------------------------
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://null-protocol-store.onrender.com")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://null-protocol-app-store.onrender.com")
 PORT = int(os.getenv("PORT", "8080"))
 
 # ------------------------------------------------------------
