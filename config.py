@@ -73,14 +73,15 @@ FORCE_JOIN_CHANNELS = [
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
 # ============================================
-# 10. API ENDPOINTS CONFIGURATION
+# 10. API ENDPOINTS CONFIGURATION (UPDATED)
 # ============================================
 API_ENDPOINTS = {
     "num": {
         "name": "Phone Number Info",
         "description": "Get basic information about a phone number",
-        "url_template": "https://store.abdulstoreapi.workers.dev/api/v1?key={api_key}&num={param}",
-        "external_api_key": os.getenv("NUM_API_KEY", "ak_73be4bb78f617ab2ade18663c90b31b1"),
+        # New API – no API key needed, keeping {api_key} for backward compatibility
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/Number?Number={param}&key={api_key}",
+        "external_api_key": os.getenv("NUM_API_KEY", ""),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
@@ -94,14 +95,15 @@ API_ENDPOINTS = {
     "tg": {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
-        "url_template": "https://sbsakib.eu.cc/apis/tg_username?key={api_key}&user={param}",
-        "external_api_key": os.getenv("TG_API_KEY", "Demo"),
+        # New API – fixed key "null_protocol"
+        "url_template": "https://rootx-osint.in/?type=tg_num&key={api_key}&query={param}",
+        "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
         "param_name": "username",
         "param_example": "@InvalidAnand",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "extra_blacklist": [
             "is_verified", "id", "has_profile_pic", "first_name",
-            "is_scam", "credit", "common_chats", "bio", "username", "target", 
+            "is_scam", "credit", "common_chats", "bio", "username", "target",
             "is_fake", "type", "public_view",
             "is_bot"
         ],
