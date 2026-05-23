@@ -1,5 +1,4 @@
-# main.py - FINAL PRODUCTION BOT - ALL FEATURES, NO ERRORS
-# PostgreSQL, Custom Keys, Backup, Force Join, Admin Panel, Commands, etc.
+# main.py - FINAL PRODUCTION BOT - ALL FEATURES + POOL FIX
 
 import json, asyncio, secrets, time, re, aiohttp, logging, os
 from datetime import datetime, timedelta
@@ -14,7 +13,7 @@ from telegram.ext import (
 )
 from config import *
 from database import *
-import database  
+import database                    # <-- Added to fix pool reference
 
 # Logging
 logging.basicConfig(
@@ -219,7 +218,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = user.id
     await update_user_info(uid, user.username, user.first_name, user.last_name)
 
-    # Referral handling
     if context.args and context.args[0].startswith('ref_'):
         try:
             ref = int(context.args[0][4:])
@@ -228,7 +226,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-    # Force join check
     joined, missing = await check_force_join(uid)
     if not joined:
         await send_force_join(uid, missing)
@@ -237,7 +234,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET joined_force_channels=TRUE WHERE user_id=$1", uid)
 
-    # Give referral reward
     if 'pending_ref' in context.user_data:
         ref = context.user_data.pop('pending_ref')
         await add_credits(ref, REFERRAL_REWARD_CREDITS)
@@ -269,7 +265,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb)
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await balance_command(update, context)  # same as balance for now
+    await balance_command(update, context)
 
 async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_redeem'] = True
@@ -313,7 +309,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_adm = await is_admin(uid)
     is_prem = await is_premium(uid)
 
-    # Force join check for non-admins
     if not is_adm and data not in ["check_join", "close_panel"]:
         joined, missing = await check_force_join(uid)
         if not joined:
@@ -803,7 +798,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text.strip()
 
-    # Redeem code
     if context.user_data.get('awaiting_redeem'):
         context.user_data.pop('awaiting_redeem')
         if await redeem_code(uid, text):
@@ -812,7 +806,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Invalid/expired code.")
         return
 
-    # Only admins beyond this point
     if not await is_admin(uid):
         return
 
@@ -1061,6 +1054,8 @@ async def daily_backup():
 async def on_startup():
     global http_session
     await init_db()
+    global pool                     # <-- POOL FIX LINE 1
+    pool = database.pool            # <-- POOL FIX LINE 2
     http_session = aiohttp.ClientSession()
     await application.initialize()
     await application.bot.set_my_commands([
