@@ -1,4 +1,4 @@
-# database.py - ASYNCPG (POSTGRESQL) FINAL WITH REQUEST COUNTERS & ALL FEATURES
+# database.py - ASYNCPG (POSTGRESQL) FINAL - ZERO ERRORS - ALL FEATURES
 
 import asyncpg
 import secrets
@@ -9,7 +9,7 @@ from config import DATABASE_URL, DEFAULT_PLANS
 pool = None
 
 async def init_db():
-    """Initialize the database pool and create tables if they don't exist."""
+    """Initialize the database pool and create all tables if not exist."""
     global pool
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
 
@@ -47,7 +47,7 @@ async def init_db():
             )
         """)
 
-        # Subscription plans
+        # Subscription plans (editable by admin)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS api_plans (
                 plan_id SERIAL PRIMARY KEY,
@@ -69,8 +69,8 @@ async def init_db():
                 start_date TIMESTAMPTZ DEFAULT NOW(),
                 end_date TIMESTAMPTZ NOT NULL,
                 is_active BOOLEAN DEFAULT TRUE,
-                FOREIGN KEY(user_id) REFERENCES users(user_id),
-                FOREIGN KEY(plan_id) REFERENCES api_plans(plan_id)
+                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY(plan_id) REFERENCES api_plans(plan_id) ON DELETE CASCADE
             )
         """)
 
@@ -88,7 +88,7 @@ async def init_db():
             )
         """)
 
-        # Code redemptions
+        # Code redemptions (who used which code)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS code_redemptions (
                 redemption_id SERIAL PRIMARY KEY,
@@ -108,11 +108,11 @@ async def init_db():
                     ON CONFLICT (api_type, plan_name) DO NOTHING
                 """, api_type, plan_name, details['credits'], details['days'])
 
-    print("✅ PostgreSQL tables ensured (with request counters).")
+    print("✅ PostgreSQL tables created/verified (with request counters).")
 
 # ==================== USER FUNCTIONS ====================
 async def get_user(user_id: int):
-    """Fetch user from DB, create if not exists."""
+    """Fetch user row as dict. Create if not exists."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
         if not row:
@@ -137,7 +137,7 @@ async def get_user(user_id: int):
         return dict(row)
 
 async def update_user_info(user_id, username, first_name, last_name):
-    """Update basic Telegram profile info."""
+    """Update basic profile info."""
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE users SET username=$1, first_name=$2, last_name=$3 WHERE user_id=$4",
@@ -145,7 +145,7 @@ async def update_user_info(user_id, username, first_name, last_name):
         )
 
 async def set_referrer(user_id, referrer_id):
-    """Set referrer for a user if not already set."""
+    """Set referrer for user if not already set. Returns True if set."""
     async with pool.acquire() as conn:
         existing = await conn.fetchval("SELECT referrer_id FROM users WHERE user_id=$1", user_id)
         if existing is None and referrer_id != user_id:
@@ -154,12 +154,12 @@ async def set_referrer(user_id, referrer_id):
         return False
 
 async def add_credits(user_id, amount):
-    """Add credits to user account."""
+    """Add credits to user."""
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET credits = credits + $1 WHERE user_id=$2", amount, user_id)
 
 async def deduct_credits(user_id, amount) -> bool:
-    """Deduct credits if enough balance. Returns True on success."""
+    """Deduct credits if user has enough. Returns True on success."""
     async with pool.acquire() as conn:
         credits = await conn.fetchval("SELECT credits FROM users WHERE user_id=$1", user_id)
         if credits is not None and credits >= amount:
@@ -168,12 +168,12 @@ async def deduct_credits(user_id, amount) -> bool:
         return False
 
 async def get_user_credits(user_id):
-    """Get current credit balance."""
+    """Return current credit balance."""
     async with pool.acquire() as conn:
         return await conn.fetchval("SELECT credits FROM users WHERE user_id=$1", user_id) or 0
 
 async def is_admin(user_id):
-    """Check if user is owner (admin)."""
+    """Check if user is admin (owner_id or is_owner flag)."""
     from config import OWNER_ID
     if user_id == OWNER_ID:
         return True
@@ -181,7 +181,7 @@ async def is_admin(user_id):
         return await conn.fetchval("SELECT is_owner FROM users WHERE user_id=$1", user_id) or False
 
 async def is_premium(user_id):
-    """Check if user has active premium (auto-expires)."""
+    """Check if user has active premium (auto-expire if needed)."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT is_premium, premium_expiry FROM users WHERE user_id=$1", user_id)
         if not row or not row['is_premium']:
@@ -214,7 +214,7 @@ async def ban_user(user_id, ban=True):
 
 # ==================== API KEY FUNCTIONS ====================
 async def generate_random_key():
-    """Generate a random API key."""
+    """Generate a secure random API key."""
     return f"ak_{secrets.token_hex(16)}"
 
 async def create_api_key(key, created_by, expires_days=30, rate_limit=80, total_requests=None, custom_name=""):
@@ -228,7 +228,7 @@ async def create_api_key(key, created_by, expires_days=30, rate_limit=80, total_
         """, key, created_by, expires_at, rate_limit, total_requests, custom_name)
 
 async def validate_api_key(key):
-    """Check if key is valid, not expired, and active. Returns (valid, created_by, rate_limit)."""
+    """Check if key is valid, active, and not expired. Returns (valid, created_by, rate_limit)."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT created_by, expires_at, rate_limit_per_min, is_active FROM api_keys WHERE key=$1", key
@@ -238,7 +238,7 @@ async def validate_api_key(key):
         return True, row['created_by'], row['rate_limit_per_min']
 
 async def list_api_keys(created_by=None):
-    """List API keys, optionally filtered by creator. Returns list of rows (dicts)."""
+    """Return list of API key rows, optionally filtered by creator."""
     async with pool.acquire() as conn:
         if created_by is not None:
             return await conn.fetch(
@@ -250,12 +250,12 @@ async def list_api_keys(created_by=None):
         )
 
 async def deactivate_api_key(key):
-    """Set key as inactive."""
+    """Mark key as inactive."""
     async with pool.acquire() as conn:
         await conn.execute("UPDATE api_keys SET is_active=FALSE WHERE key=$1", key)
 
 async def activate_api_key(key):
-    """Set key as active."""
+    """Mark key as active."""
     async with pool.acquire() as conn:
         await conn.execute("UPDATE api_keys SET is_active=TRUE WHERE key=$1", key)
 
@@ -271,13 +271,13 @@ async def get_request_stats(key):
         return used, remaining, total
 
 async def increment_request_count(key):
-    """Increment the request counter for a key."""
+    """Increment request counter for the key."""
     async with pool.acquire() as conn:
         await conn.execute("UPDATE api_keys SET requests_made = requests_made + 1 WHERE key=$1", key)
 
 # ==================== SUBSCRIPTION FUNCTIONS ====================
 async def get_plan(api_type, plan_name):
-    """Return plan_id, price_credits, duration_days for a plan."""
+    """Fetch plan details (plan_id, price_credits, duration_days)."""
     async with pool.acquire() as conn:
         return await conn.fetchrow(
             "SELECT plan_id, price_credits, duration_days FROM api_plans WHERE api_type=$1 AND plan_name=$2",
@@ -285,7 +285,7 @@ async def get_plan(api_type, plan_name):
         )
 
 async def create_subscription(user_id, api_type, plan_name):
-    """Activate a plan for user after deducting credits. Returns True on success."""
+    """Activate subscription after deducting credits. Returns True on success."""
     plan = await get_plan(api_type, plan_name)
     if not plan:
         return False
@@ -302,7 +302,7 @@ async def create_subscription(user_id, api_type, plan_name):
     return True
 
 async def has_active_subscription(user_id, api_type):
-    """Check if user has an active (non-expired) subscription for given API."""
+    """Check if user has an active (non-expired) subscription for given API type."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT end_date FROM user_subscriptions WHERE user_id=$1 AND api_type=$2 AND is_active=TRUE",
@@ -310,17 +310,17 @@ async def has_active_subscription(user_id, api_type):
         )
         if row and row['end_date'] > datetime.now():
             return True
-        # Mark expired subscription as inactive
+        # If expired, mark inactive (cleanup)
         if row:
             await conn.execute(
-                "UPDATE user_subscriptions SET is_active=FALSE WHERE user_id=$1 AND api_type=$2",
+                "UPDATE user_subscriptions SET is_active=FALSE WHERE user_id=$1 AND api_type=$2 AND is_active=TRUE",
                 user_id, api_type
             )
         return False
 
 # ==================== REDEEM CODE FUNCTIONS ====================
 async def create_redeem_code(code, credits, created_by, max_uses=1, expires_days=None):
-    """Create a new redeem code."""
+    """Create a redeemable code."""
     expires = None if expires_days is None else (datetime.now() + timedelta(days=expires_days))
     async with pool.acquire() as conn:
         await conn.execute(
@@ -331,6 +331,7 @@ async def create_redeem_code(code, credits, created_by, max_uses=1, expires_days
 async def redeem_code(user_id, code):
     """Redeem a code: add credits if valid. Returns True on success."""
     async with pool.acquire() as conn:
+        # Validate code
         row = await conn.fetchrow(
             "SELECT credits_value, max_uses, used_count, expires_at, is_active FROM redeem_codes WHERE code=$1", code
         )
@@ -338,13 +339,15 @@ async def redeem_code(user_id, code):
             return False
         if row['expires_at'] and row['expires_at'] < datetime.now():
             return False
-        # Check if user already used this code
+
+        # Check if user already redeemed
         already = await conn.fetchval(
             "SELECT redemption_id FROM code_redemptions WHERE user_id=$1 AND code=$2", user_id, code
         )
         if already:
             return False
-        # Add credits, increment used_count, record redemption
+
+        # Apply credits and increment usage
         await conn.execute("UPDATE users SET credits = credits + $1 WHERE user_id=$2", row['credits_value'], user_id)
         await conn.execute("UPDATE redeem_codes SET used_count = used_count + 1 WHERE code=$1", code)
         await conn.execute(
@@ -354,12 +357,12 @@ async def redeem_code(user_id, code):
 
 # ==================== PAGINATION HELPERS ====================
 async def count_users():
-    """Total users count."""
+    """Total number of users."""
     async with pool.acquire() as conn:
         return await conn.fetchval("SELECT COUNT(*) FROM users")
 
 async def get_users_paginated(offset, limit):
-    """Return list of user rows (dicts) for admin user list."""
+    """Return list of user records for admin panel (offset/limit)."""
     async with pool.acquire() as conn:
         return await conn.fetch(
             "SELECT user_id, username, first_name, is_banned, is_premium, credits FROM users ORDER BY user_id LIMIT $1 OFFSET $2",
@@ -367,23 +370,23 @@ async def get_users_paginated(offset, limit):
         )
 
 async def count_admins():
-    """Total admins count."""
+    """Number of users with admin rights."""
     async with pool.acquire() as conn:
         return await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_owner=TRUE")
 
 async def get_admins_paginated(offset, limit):
-    """Return list of admin rows."""
+    """Return list of admin users."""
     async with pool.acquire() as conn:
         return await conn.fetch(
             "SELECT user_id, username, first_name FROM users WHERE is_owner=TRUE ORDER BY user_id LIMIT $1 OFFSET $2",
             limit, offset
         )
 
-# ==================== BACKUP (CSV EXPORT) ====================
+# ==================== BACKUP EXPORT (for daily CSV) ====================
 async def export_tables_to_csv():
     """
-    Export all tables to CSV strings.
-    Returns dict: table_name -> CSV content (str).
+    Export all major tables to CSV strings.
+    Returns dict: table_name -> CSV content (string)
     """
     tables = ['users', 'api_keys', 'api_plans', 'user_subscriptions', 'redeem_codes', 'code_redemptions']
     csv_files = {}
@@ -391,7 +394,7 @@ async def export_tables_to_csv():
         for table in tables:
             rows = await conn.fetch(f"SELECT * FROM {table}")
             if not rows:
-                csv_files[table] = ""  # empty file
+                csv_files[table] = ""  # empty
                 continue
             headers = list(rows[0].keys())
             lines = [','.join(headers)]
@@ -403,7 +406,7 @@ async def export_tables_to_csv():
 
 # ==================== CLEANUP ====================
 async def close_db():
-    """Close the connection pool."""
+    """Close the connection pool gracefully."""
     if pool:
         await pool.close()
         print("✅ PostgreSQL pool closed.")
