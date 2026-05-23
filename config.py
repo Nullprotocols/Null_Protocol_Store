@@ -1,46 +1,49 @@
-# config.py - ENVIRONMENT VARIABLES READY (NO CODE EDIT REQUIRED)
+# config.py - FINAL PRODUCTION VERSION (PostgreSQL + Backup + Custom Keys)
 
 import os
 
-# ============================================
-# 1. TELEGRAM BOT CREDENTIALS (FROM ENV)
-# ============================================
+# ------------------------------------------------------------
+# 1. TELEGRAM BOT
+# ------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("❌ TELEGRAM_BOT_TOKEN environment variable is missing!")
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN missing!")
 
 OWNER_ID = int(os.getenv("OWNER_ID", "8104850843"))
-
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "NullProtocol_SuperSecret_2024")
-
 BOT_MODE = os.getenv("BOT_MODE", "webhook")
 
-# ============================================
-# 2. SERVER & DEPLOYMENT (Render)
-# ============================================
+# ------------------------------------------------------------
+# 2. SERVER
+# ------------------------------------------------------------
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://null-protocol-store.onrender.com")
 PORT = int(os.getenv("PORT", "8080"))
 
-# ============================================
-# 3. DATABASE
-# ============================================
-DB_FILE = os.getenv("DB_FILE", "bot.db")
+# ------------------------------------------------------------
+# 3. DATABASE (PostgreSQL) – internal URL from env
+# ------------------------------------------------------------
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("❌ DATABASE_URL missing! Set the internal PostgreSQL URL.")
+# Convert postgres:// to postgresql:// for asyncpg
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# ============================================
-# 4. CACHE CONFIGURATION
-# ============================================
+# ------------------------------------------------------------
+# 4. CACHE (in-memory or Redis optional)
+# ------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", None)
 CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
 
-# ============================================
-# 5. AUTO-PING
-# ============================================
+# ------------------------------------------------------------
+# 5. AUTO-PING (keep alive)
+# ------------------------------------------------------------
 SELF_PING_INTERVAL = int(os.getenv("SELF_PING_INTERVAL", "240"))
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
 
-# ============================================
+# ------------------------------------------------------------
 # 6. BRANDING
-# ============================================
+# ------------------------------------------------------------
 BRANDING = {
     "developer": os.getenv("BRANDING_DEVELOPER", "@Nullprotocol_x"),
     "powered_by": os.getenv("BRANDING_POWERED", "NULL PROTOCOL"),
@@ -48,46 +51,40 @@ BRANDING = {
     "website": "https://t.me/Nullprotocol_x"
 }
 
-# ============================================
-# 7. GLOBAL BLACKLIST
-# ============================================
+# ------------------------------------------------------------
+# 7. GLOBAL BLACKLIST (branding removal)
+# ------------------------------------------------------------
 GLOBAL_BLACKLIST = [
-    "copyright",
-    "signature",
-    "credit",
-    "source"
+    "copyright", "signature", "credit", "source"
 ]
 
-# ============================================
+# ------------------------------------------------------------
 # 8. FORCE JOIN CHANNELS
-# ============================================
+# ------------------------------------------------------------
 FORCE_JOIN_CHANNELS = [
     {"id": -1003090922367, "link": "https://t.me/all_data_here", "name": "All Data Here"},
     {"id": -1003698567122, "link": "https://t.me/osint_lookup", "name": "OSINT Lookup"},
     {"id": -1003672015073, "link": "https://t.me/legend_chats_osint", "name": "LEGEND CHATS"}
 ]
 
-# ============================================
+# ------------------------------------------------------------
 # 9. LOG CHANNEL
-# ============================================
+# ------------------------------------------------------------
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
-# ============================================
-# 10. API ENDPOINTS CONFIGURATION (UPDATED)
-# ============================================
+# ------------------------------------------------------------
+# 10. API ENDPOINTS (Phone & Telegram Username)
+# ------------------------------------------------------------
 API_ENDPOINTS = {
     "num": {
         "name": "Phone Number Info",
         "description": "Get basic information about a phone number",
-        # New API – no API key needed, keeping {api_key} for backward compatibility
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/Number?Number={param}&key={api_key}",
         "external_api_key": os.getenv("NUM_API_KEY", ""),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
-        "extra_blacklist": [
-            "credits"
-        ],
+        "extra_blacklist": ["credits"],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True
@@ -95,14 +92,15 @@ API_ENDPOINTS = {
     "tg": {
         "name": "Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username",
-        # New API – fixed key "null_protocol"
         "url_template": "https://rootx-osint.in/?type=tg_num&key={api_key}&query={param}",
         "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
         "param_name": "username",
         "param_example": "@InvalidAnand",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "extra_blacklist": [
-            "req_left", "req_total", "expiry", "developer"
+            "is_verified", "id", "has_profile_pic", "first_name",
+            "is_scam", "credit", "common_chats", "bio", "username", "target",
+            "is_fake", "type", "public_view", "is_bot"
         ],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
@@ -110,9 +108,9 @@ API_ENDPOINTS = {
     }
 }
 
-# ============================================
-# 11. API PLANS & PRICING
-# ============================================
+# ------------------------------------------------------------
+# 11. SUBSCRIPTION PLANS & PRICING
+# ------------------------------------------------------------
 DEFAULT_PLANS = {
     "num": {
         "weekly": {"credits": 15, "days": 7},
@@ -124,39 +122,41 @@ DEFAULT_PLANS = {
     }
 }
 
-# ============================================
+# ------------------------------------------------------------
 # 12. REFERRAL SYSTEM
-# ============================================
+# ------------------------------------------------------------
 REFERRAL_REWARD_CREDITS = int(os.getenv("REFERRAL_REWARD_CREDITS", "3"))
 
-# ============================================
+# ------------------------------------------------------------
 # 13. PREMIUM USER SETTINGS
-# ============================================
+# ------------------------------------------------------------
 PREMIUM_EXEMPT_FORCE_JOIN = os.getenv("PREMIUM_EXEMPT_FORCE_JOIN", "False").lower() == "true"
 
-# ============================================
-# 14. ADMIN / OWNER CONTACT
-# ============================================
+# ------------------------------------------------------------
+# 14. CONTACTS
+# ------------------------------------------------------------
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Nullprotocol_x")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Nullprotocol_x")
 
-# ============================================
-# 15. RATE LIMITING
-# ============================================
+# ------------------------------------------------------------
+# 15. DEFAULT RATE LIMIT
+# ------------------------------------------------------------
 DEFAULT_RATE_LIMIT_PER_MIN = int(os.getenv("DEFAULT_RATE_LIMIT", "80"))
 
-# ============================================
-# 16. DEBUG & LOGGING
-# ============================================
+# ------------------------------------------------------------
+# 16. BACKUP SETTINGS (24hr CSV to owner DM)
+# ------------------------------------------------------------
+BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
+BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))  # default: owner DM
+
+# ------------------------------------------------------------
+# 17. DEBUG & LOGGING
+# ------------------------------------------------------------
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# ============================================
-# PRINT CONFIRMATION
-# ============================================
-print("✅ CONFIG LOADED - NULL PROTOCOL API BOT")
+print("✅ CONFIG LOADED - POSTGRESQL + BACKUP + CUSTOM KEYS")
 print(f"🚀 Bot Mode: {BOT_MODE.upper()}")
 print(f"👑 Owner ID: {OWNER_ID}")
 print(f"📢 Log Channel: {LOG_CHANNEL_ID}")
-print(f"🔗 Force Join Channels: {len(FORCE_JOIN_CHANNELS)}")
-print(f"💎 Branding: {BRANDING['developer']}")
+print(f"💾 Database: PostgreSQL (internal URL)")
