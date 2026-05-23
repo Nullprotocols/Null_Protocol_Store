@@ -102,10 +102,7 @@ API_ENDPOINTS = {
         "param_example": "@InvalidAnand",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "extra_blacklist": [
-            "is_verified", "id", "has_profile_pic", "first_name",
-            "is_scam", "credit", "common_chats", "bio", "username", "target",
-            "is_fake", "type", "public_view",
-            "is_bot"
+            "req_left", "req_total", "expiry", "developer"
         ],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
