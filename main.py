@@ -1,7 +1,9 @@
-# main.py - FINAL PRODUCTION BOT - ALL FEATURES + POOL FIX
+# main.py - FINAL ULTRA-FAST VERSION (ALL FEATURES, NO SKIPPING)
+# PostgreSQL, Custom Keys (flexible + permanent), Delete Keys,
+# Backup, Force Join, Admin Panel, Commands, Ultra-Fast Response
 
 import json, asyncio, secrets, time, re, aiohttp, logging, os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from quart import Quart, request, jsonify
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -13,7 +15,7 @@ from telegram.ext import (
 )
 from config import *
 from database import *
-import database                    # <-- Added to fix pool reference
+import database                    # <-- Fix for pool reference
 
 # Logging
 logging.basicConfig(
@@ -32,21 +34,17 @@ application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
 # ====================== HELPERS ======================
 def remove_branding(data, extra_blacklist=None):
-    if extra_blacklist is None:
-        extra_blacklist = []
+    if extra_blacklist is None: extra_blacklist = []
     blacklist = set([t.lower() for t in GLOBAL_BLACKLIST] + [t.lower() for t in extra_blacklist])
-    if isinstance(data, str):
-        return data
+    if isinstance(data, str): return data
     if isinstance(data, list):
         return [remove_branding(i, extra_blacklist) for i in data if remove_branding(i, extra_blacklist) not in ("", None)]
     if isinstance(data, dict):
         cleaned = {}
         for k, v in data.items():
-            if k.lower() in blacklist:
-                continue
+            if k.lower() in blacklist: continue
             val = remove_branding(v, extra_blacklist)
-            if val not in ("", None):
-                cleaned[k] = val
+            if val not in ("", None): cleaned[k] = val
         return cleaned
     return data
 
@@ -61,7 +59,7 @@ async def set_cached(key, data):
 # ====================== QUART ROUTES ======================
 @app.route('/health')
 async def health():
-    return jsonify({"status": "ok", "time": datetime.now().isoformat()})
+    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
 
 @app.route('/api/v1/<api_type>')
 async def proxy_api(api_type):
@@ -79,7 +77,7 @@ async def proxy_api(api_type):
     if not await is_admin(uid) and not await has_active_subscription(uid, api_type):
         return jsonify({"error": "No active subscription"}), 403
 
-    # Rate limit per minute
+    # Rate limiting
     rate_key = f"rate_{key}"
     now = time.time()
     if rate_key in cache:
@@ -94,7 +92,7 @@ async def proxy_api(api_type):
     else:
         cache[rate_key] = (1, now)
 
-    # Check request quota
+    # Request quota check
     used, remaining, total = await get_request_stats(key)
     if total is not None and used is not None and used >= total:
         return jsonify({"error": "Request quota exhausted"}), 429
@@ -178,18 +176,14 @@ back_btn = lambda data: InlineKeyboardButton("🔙 Back", callback_data=data)
 
 # ====================== FORCE JOIN ======================
 async def check_force_join(user_id):
-    if await is_admin(user_id):
-        return True, []
-    if PREMIUM_EXEMPT_FORCE_JOIN and await is_premium(user_id):
-        return True, []
+    if await is_admin(user_id): return True, []
+    if PREMIUM_EXEMPT_FORCE_JOIN and await is_premium(user_id): return True, []
     missing = []
     for ch in FORCE_JOIN_CHANNELS:
         try:
             mem = await application.bot.get_chat_member(chat_id=ch['id'], user_id=user_id)
-            if mem.status in ['left', 'kicked']:
-                missing.append(ch)
-        except:
-            missing.append(ch)
+            if mem.status in ['left', 'kicked']: missing.append(ch)
+        except: missing.append(ch)
     return len(missing) == 0, missing
 
 async def send_force_join(chat_id, missing):
@@ -207,47 +201,31 @@ async def log_key_gen(user_id, key, api_type):
         f"🔹 {api_type.upper()}\n"
         f"<code>{key}</code>"
     )
-    try:
-        await application.bot.send_message(LOG_CHANNEL_ID, text, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"Log send failed: {e}")
+    try: await application.bot.send_message(LOG_CHANNEL_ID, text, parse_mode='HTML')
+    except Exception as e: logger.error(f"Log send failed: {e}")
 
 # ====================== COMMAND HANDLERS ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    uid = user.id
+    user = update.effective_user; uid = user.id
     await update_user_info(uid, user.username, user.first_name, user.last_name)
-
     if context.args and context.args[0].startswith('ref_'):
         try:
             ref = int(context.args[0][4:])
-            if ref != uid and await set_referrer(uid, ref):
-                context.user_data['pending_ref'] = ref
-        except:
-            pass
-
+            if ref != uid and await set_referrer(uid, ref): context.user_data['pending_ref'] = ref
+        except: pass
     joined, missing = await check_force_join(uid)
     if not joined:
         await send_force_join(uid, missing)
         return
-
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET joined_force_channels=TRUE WHERE user_id=$1", uid)
-
     if 'pending_ref' in context.user_data:
         ref = context.user_data.pop('pending_ref')
         await add_credits(ref, REFERRAL_REWARD_CREDITS)
-        try:
-            await application.bot.send_message(ref, f"🎉 +{REFERRAL_REWARD_CREDITS} credits referral bonus!")
-        except:
-            pass
-
-    is_adm = await is_admin(uid)
-    is_prem = await is_premium(uid)
-    await update.message.reply_text(
-        f"✨ Welcome, {user.first_name}!",
-        reply_markup=main_menu(is_adm, is_prem)
-    )
+        try: await application.bot.send_message(ref, f"🎉 +{REFERRAL_REWARD_CREDITS} credits referral bonus!")
+        except: pass
+    is_adm = await is_admin(uid); is_prem = await is_premium(uid)
+    await update.message.reply_text(f"✨ Welcome, {user.first_name}!", reply_markup=main_menu(is_adm, is_prem))
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -273,134 +251,94 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    me = await application.bot.get_me()
-    link = f"https://t.me/{me.username}?start=ref_{uid}"
+    me = await application.bot.get_me(); link = f"https://t.me/{me.username}?start=ref_{uid}"
     await update.message.reply_text(
         f"🔗 Referral link:\n<code>{link}</code>\nEarn {REFERRAL_REWARD_CREDITS} credits per referral.",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]])
+        parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]])
     )
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if await is_admin(uid):
-        await update.message.reply_text("🛡️ Admin Panel", reply_markup=admin_panel_kb())
-    else:
-        await update.message.reply_text("Access denied.")
+    if await is_admin(uid): await update.message.reply_text("🛡️ Admin Panel", reply_markup=admin_panel_kb())
+    else: await update.message.reply_text("Access denied.")
 
 # ====================== CALLBACK HANDLERS ======================
 async def check_join_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     uid = update.effective_user.id
     joined, missing = await check_force_join(uid)
     if joined:
         async with pool.acquire() as conn:
             await conn.execute("UPDATE users SET joined_force_channels=TRUE WHERE user_id=$1", uid)
         await q.edit_message_text("✅ Thank you! Press /start to see menu.")
-    else:
-        await q.answer("Join all channels first.", show_alert=True)
+    else: await q.answer("Join all channels first.", show_alert=True)
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    data = q.data
-    uid = update.effective_user.id
-    is_adm = await is_admin(uid)
-    is_prem = await is_premium(uid)
+    q = update.callback_query; await q.answer()
+    data = q.data; uid = update.effective_user.id
+    is_adm = await is_admin(uid); is_prem = await is_premium(uid)
 
     if not is_adm and data not in ["check_join", "close_panel"]:
         joined, missing = await check_force_join(uid)
         if not joined:
-            await q.edit_message_text(
-                "⚠️ Join all channels first.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Try Again", callback_data="check_join")]])
-            )
+            await q.edit_message_text("⚠️ Join all channels first.",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Try Again", callback_data="check_join")]]))
             return
 
-    if data == "menu_genkey":
-        await genkey_menu(update, context)
-    elif data == "menu_apihelp":
-        await apihelp_menu(update, context)
-    elif data == "menu_mykeys":
-        await mykeys_menu(update, context)
-    elif data == "menu_balance":
-        await balance_menu(update, context)
-    elif data == "menu_referral":
-        await referral_menu(update, context)
-    elif data == "menu_redeem":
-        await redeem_prompt(update, context)
+    if data == "menu_genkey": await genkey_menu(update, context)
+    elif data == "menu_start":
+        await q.edit_message_text(f"✨ Welcome, {update.effective_user.first_name}!", reply_markup=main_menu(is_adm, is_prem))
+    elif data == "menu_apihelp": await apihelp_menu(update, context)
+    elif data == "menu_mykeys": await mykeys_menu(update, context)
+    elif data == "menu_balance": await balance_menu(update, context)
+    elif data == "menu_referral": await referral_menu(update, context)
+    elif data == "menu_redeem": await redeem_prompt(update, context)
     elif data == "menu_customkey":
-        if is_adm or is_prem:
-            await custom_key_start(update, context)
-        else:
-            await q.answer("No permission.", show_alert=True)
+        if is_adm or is_prem: await custom_key_start(update, context)
+        else: await q.answer("No permission.", show_alert=True)
     elif data == "menu_admin":
-        if is_adm:
-            await q.edit_message_text("🛡️ Admin Panel", reply_markup=admin_panel_kb())
-        else:
-            await q.answer("Access denied.", show_alert=True)
-    elif data == "close_panel":
-        await q.delete_message()
-    elif data.startswith("gen_"):
-        await gen_specific_key(update, context)
-    elif data.startswith("plan_"):
-        await buy_plan(update, context)
-    elif data.startswith("userlist_page_"):
-        await paginated_user_list(update, context)
-    elif data.startswith("premiumlist_page_"):
-        await paginated_premium_list(update, context)
-    elif data.startswith("adminlist_page_"):
-        await paginated_admin_list(update, context)
-    elif data.startswith("keys_page_"):
-        await paginated_keys_list(update, context)
-    elif data.startswith("toggle_ban_"):
-        await toggle_ban(update, context)
-    elif data.startswith("add_credits_"):
-        await add_credits_prompt(update, context)
-    elif data.startswith("remove_premium_"):
-        await remove_premium_handler(update, context)
-    elif data.startswith("make_premium_"):
-        await make_premium_prompt(update, context)
-    elif data.startswith("userdetail_"):
-        await user_detail_popup(update, context)
-    elif data.startswith("admintoggle_"):
-        await toggle_admin(update, context)
-    elif data.startswith("keytoggle_"):
-        await toggle_key_status(update, context)
-    elif data.startswith("bcast_"):
-        await broadcast_type(update, context)
-    elif data == "check_join":
-        await check_join_cb(update, context)
-    elif data == "admin_customkey":
-        await custom_key_admin(update, context)
-    elif data.startswith("custkey_"):
-        await custom_key_type_selected(update, context)
+        if is_adm: await q.edit_message_text("🛡️ Admin Panel", reply_markup=admin_panel_kb())
+        else: await q.answer("Access denied.", show_alert=True)
+    elif data == "close_panel": await q.delete_message()
+    elif data.startswith("gen_"): await gen_specific_key(update, context)
+    elif data.startswith("plan_"): await buy_plan(update, context)
+    elif data.startswith("userlist_page_"): await paginated_user_list(update, context)
+    elif data.startswith("premiumlist_page_"): await paginated_premium_list(update, context)
+    elif data.startswith("adminlist_page_"): await paginated_admin_list(update, context)
+    elif data.startswith("keys_page_"): await paginated_keys_list(update, context)
+    elif data.startswith("toggle_ban_"): await toggle_ban(update, context)
+    elif data.startswith("add_credits_"): await add_credits_prompt(update, context)
+    elif data.startswith("remove_premium_"): await remove_premium_handler(update, context)
+    elif data.startswith("make_premium_"): await make_premium_prompt(update, context)
+    elif data.startswith("userdetail_"): await user_detail_popup(update, context)
+    elif data.startswith("admintoggle_"): await toggle_admin(update, context)
+    elif data.startswith("keytoggle_"): await toggle_key_status(update, context)
+    elif data.startswith("delete_key_"): await confirm_delete_key(update, context)
+    elif data.startswith("confirm_delete_key_"): await execute_delete_key(update, context)
+    elif data.startswith("bcast_"): await broadcast_type(update, context)
+    elif data == "check_join": await check_join_cb(update, context)
+    elif data == "admin_customkey": await custom_key_admin(update, context)
+    elif data.startswith("custkey_"): await custom_key_type_selected(update, context)
     elif data == "admin_addpremium":
         context.user_data['admin_state'] = 'awaiting_premium_user'
         await q.edit_message_text("Send user ID to add premium:", reply_markup=InlineKeyboardMarkup([[back_btn("admin_premium")]]))
-    else:
-        await q.answer("Not implemented.", show_alert=True)
+    else: await q.answer("Not implemented.", show_alert=True)
 
 # ====================== SUB MENUS ======================
 async def genkey_menu(update, context):
-    q = update.callback_query
-    uid = update.effective_user.id
+    q = update.callback_query; uid = update.effective_user.id
     if not await is_admin(uid) and not (await has_active_subscription(uid, 'num') or await has_active_subscription(uid, 'tg')):
         await q.edit_message_text("❌ No subscription.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
         return
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📞 Number Info", callback_data="gen_num"),
-         InlineKeyboardButton("📱 Telegram", callback_data="gen_tg")],
+        [InlineKeyboardButton("📞 Number Info", callback_data="gen_num"), InlineKeyboardButton("📱 Telegram", callback_data="gen_tg")],
         [back_btn("menu_start")]
     ])
     await q.edit_message_text("Select API:", reply_markup=kb)
 
 async def gen_specific_key(update, context):
-    q = update.callback_query
-    await q.answer()
-    api_type = q.data.split('_')[1]
-    uid = update.effective_user.id
+    q = update.callback_query; await q.answer()
+    api_type = q.data.split('_')[1]; uid = update.effective_user.id
     if not await is_admin(uid) and not await has_active_subscription(uid, api_type):
         await q.edit_message_text("❌ No subscription.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
         return
@@ -411,26 +349,22 @@ async def gen_specific_key(update, context):
     ep = f"{RENDER_EXTERNAL_URL}/api/v1/{api_type}?key={key}&{API_ENDPOINTS[api_type]['param_name']}={ex}"
     await q.edit_message_text(
         f"✅ Key: <code>{key}</code>\nExample:\n<code>{ep}</code>",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup([[back_btn("menu_genkey")]])
+        parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[back_btn("menu_genkey")]])
     )
 
 async def custom_key_start(update, context):
     q = update.callback_query
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📞 Number", callback_data="custkey_num"),
-         InlineKeyboardButton("📱 TG", callback_data="custkey_tg")],
+        [InlineKeyboardButton("📞 Number", callback_data="custkey_num"), InlineKeyboardButton("📱 TG", callback_data="custkey_tg")],
         [back_btn("menu_start")]
     ])
     await q.edit_message_text("Select API for custom key:", reply_markup=kb)
 
 async def custom_key_type_selected(update, context):
-    q = update.callback_query
-    await q.answer()
-    api = q.data.split('_')[1]
-    context.user_data['custkey_api'] = api
+    q = update.callback_query; await q.answer()
+    api = q.data.split('_')[1]; context.user_data['custkey_api'] = api
     context.user_data['admin_state'] = 'awaiting_custom_key_string'
-    await q.edit_message_text("Send your desired API key (must start with 'ak_'):", reply_markup=InlineKeyboardMarkup([[back_btn("menu_customkey")]]))
+    await q.edit_message_text("Send your desired API key (any non-empty string):", reply_markup=InlineKeyboardMarkup([[back_btn("menu_customkey")]]))
 
 async def custom_key_admin(update, context):
     await custom_key_start(update, context)
@@ -443,12 +377,11 @@ async def apihelp_menu(update, context):
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
 
 async def mykeys_menu(update, context):
-    q = update.callback_query
-    uid = update.effective_user.id
+    q = update.callback_query; uid = update.effective_user.id
     keys = await list_api_keys(uid)
     text = "🔑 <b>Your Keys</b>\n\n"
-    if not keys:
-        text = "No keys found."
+    kb = []
+    if not keys: text = "No keys found."
     else:
         for row in keys:
             status = "✅" if row['is_active'] else "❌"
@@ -456,17 +389,16 @@ async def mykeys_menu(update, context):
             if row['total_requests_allowed'] is not None:
                 remaining = max(0, row['total_requests_allowed'] - row['requests_made'])
                 req_info = f" | Req: {remaining}/{row['total_requests_allowed']}"
-            else:
-                req_info = " | Req: ∞"
+            else: req_info = " | Req: ∞"
             text += f"{status} <code>{row['key'][:20]}...</code> Exp: {row['expires_at'].strftime('%Y-%m-%d')}{req_info}\n"
-    await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
+            kb.append([InlineKeyboardButton(f"🗑 Delete {row['key'][:10]}...", callback_data=f"delete_key_{row['key']}")])
+    kb.append([back_btn("menu_start")])
+    await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def balance_menu(update, context):
-    q = update.callback_query
-    uid = update.effective_user.id
+    q = update.callback_query; uid = update.effective_user.id
     bal = await get_user_credits(uid)
-    has_num = await has_active_subscription(uid, 'num')
-    has_tg = await has_active_subscription(uid, 'tg')
+    has_num = await has_active_subscription(uid, 'num'); has_tg = await has_active_subscription(uid, 'tg')
     text = f"💰 Credits: <b>{bal}</b>\n📞 Num: {'✅' if has_num else '❌'}\n📱 TG: {'✅' if has_tg else '❌'}\n\nBuy plan:"
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📞 Num Weekly (15)", callback_data="plan_num_weekly")],
@@ -478,77 +410,49 @@ async def balance_menu(update, context):
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=kb)
 
 async def buy_plan(update, context):
-    q = update.callback_query
-    await q.answer()
-    parts = q.data.split('_')
-    api_type = parts[1]
-    plan = parts[2]
-    uid = update.effective_user.id
-
+    q = update.callback_query; await q.answer()
+    parts = q.data.split('_'); api_type=parts[1]; plan=parts[2]; uid=update.effective_user.id
     if await is_admin(uid):
         pl = await get_plan(api_type, plan)
         if pl:
             async with pool.acquire() as conn:
-                start = datetime.now()
-                end = start + timedelta(days=pl['duration_days'])
-                await conn.execute(
-                    "INSERT INTO user_subscriptions (user_id, api_type, plan_id, start_date, end_date, is_active) VALUES ($1,$2,$3,$4,$5,TRUE)",
-                    uid, api_type, pl['plan_id'], start, end
-                )
+                start = datetime.now(timezone.utc); end = start + timedelta(days=pl['duration_days'])
+                await conn.execute("INSERT INTO user_subscriptions (user_id, api_type, plan_id, start_date, end_date, is_active) VALUES ($1,$2,$3,$4,$5,TRUE)",
+                                   uid, api_type, pl['plan_id'], start, end)
             await q.edit_message_text("✅ Admin plan activated.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
-        else:
-            await q.answer("Plan error.", show_alert=True)
+        else: await q.answer("Plan error.", show_alert=True)
         return
-
     pl = await get_plan(api_type, plan)
-    if not pl:
-        await q.answer("Plan not found.", show_alert=True)
-        return
+    if not pl: await q.answer("Plan not found.", show_alert=True); return
     bal = await get_user_credits(uid)
-    if bal < pl['price_credits']:
-        await q.answer(f"Need {pl['price_credits']} credits.", show_alert=True)
-        return
+    if bal < pl['price_credits']: await q.answer(f"Need {pl['price_credits']} credits.", show_alert=True); return
     if await create_subscription(uid, api_type, plan):
         await q.edit_message_text(f"✅ Purchased {api_type.upper()} {plan} plan.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
-    else:
-        await q.answer("Failed.", show_alert=True)
+    else: await q.answer("Failed.", show_alert=True)
 
 async def referral_menu(update, context):
-    q = update.callback_query
-    uid = update.effective_user.id
-    me = await application.bot.get_me()
-    link = f"https://t.me/{me.username}?start=ref_{uid}"
-    await q.edit_message_text(
-        f"🔗 Link:\n<code>{link}</code>\nEarn {REFERRAL_REWARD_CREDITS} credits.",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]])
-    )
+    q = update.callback_query; uid = update.effective_user.id
+    me = await application.bot.get_me(); link = f"https://t.me/{me.username}?start=ref_{uid}"
+    await q.edit_message_text(f"🔗 Link:\n<code>{link}</code>\nEarn {REFERRAL_REWARD_CREDITS} credits.", parse_mode='HTML',
+                              reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
 
 async def redeem_prompt(update, context):
-    q = update.callback_query
-    context.user_data['awaiting_redeem'] = True
+    q = update.callback_query; context.user_data['awaiting_redeem'] = True
     await q.edit_message_text("Send redeem code:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
 
 # ====================== ADMIN PANEL HANDLERS ======================
 async def admin_menu_handler(update, context):
-    q = update.callback_query
-    data = q.data
-    await q.answer()
-
-    if data == "admin_users":
-        await show_user_list(update, context, 0)
-    elif data == "admin_keys":
-        await show_keys_list(update, context, 0)
+    q = update.callback_query; data = q.data; await q.answer()
+    if data == "admin_users": await show_user_list(update, context, 0)
+    elif data == "admin_keys": await show_keys_list(update, context, 0)
     elif data == "admin_addcredits":
         context.user_data['admin_state'] = 'awaiting_user_for_credits'
         await q.edit_message_text("Send user ID:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
-    elif data == "admin_premium":
-        await show_premium_list(update, context, 0)
+    elif data == "admin_premium": await show_premium_list(update, context, 0)
     elif data == "admin_genredeem":
         context.user_data['admin_state'] = 'awaiting_redeem_credits'
         await q.edit_message_text("Credits amount:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
-    elif data == "admin_admins":
-        await show_admin_list(update, context, 0)
+    elif data == "admin_admins": await show_admin_list(update, context, 0)
     elif data == "admin_stats":
         total = await count_users()
         async with pool.acquire() as conn:
@@ -579,26 +483,20 @@ async def admin_menu_handler(update, context):
         ])
         await q.edit_message_text("Select API:", reply_markup=kb)
     elif data.startswith("price_"):
-        api = data.split('_')[1]
-        context.user_data['pricing_api'] = api
+        api = data.split('_')[1]; context.user_data['pricing_api'] = api
         context.user_data['admin_state'] = 'awaiting_pricing_plan'
         await q.edit_message_text("Which plan? (weekly/monthly):", reply_markup=InlineKeyboardMarkup([[back_btn("admin_pricing")]]))
-    elif data == "admin_customkey":
-        await custom_key_admin(update, context)
+    elif data == "admin_customkey": await custom_key_admin(update, context)
     elif data == "admin_addpremium":
         context.user_data['admin_state'] = 'awaiting_premium_user'
         await q.edit_message_text("Send user ID:", reply_markup=InlineKeyboardMarkup([[back_btn("admin_premium")]]))
-    else:
-        await q.answer("Coming soon.", show_alert=True)
+    else: await q.answer("Coming soon.", show_alert=True)
 
 # ====================== PAGINATION VIEWS ======================
 async def show_user_list(update, context, page):
-    q = update.callback_query
-    limit = 10
-    offset = page * limit
-    users = await get_users_paginated(offset, limit)
-    total = await count_users()
-    pages = max((total + limit - 1) // limit, 1)
+    q = update.callback_query; limit=10; offset=page*limit
+    users = await get_users_paginated(offset, limit); total = await count_users()
+    pages = max((total+limit-1)//limit, 1)
     text = f"👥 <b>Users (Page {page+1}/{pages})</b>\n\n"
     kb = []
     for u in users:
@@ -612,94 +510,72 @@ async def show_user_list(update, context, page):
         row.append(InlineKeyboardButton("⭐" if prem else "⭐", callback_data=f"{'remove_premium_' if prem else 'make_premium_'}{uid}"))
         kb.append(row)
     nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"userlist_page_{page-1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"userlist_page_{page+1}"))
-    if nav:
-        kb.append(nav)
+    if page>0: nav.append(InlineKeyboardButton("◀️", callback_data=f"userlist_page_{page-1}"))
+    if page<pages-1: nav.append(InlineKeyboardButton("▶️", callback_data=f"userlist_page_{page+1}"))
+    if nav: kb.append(nav)
     kb.append([back_btn("menu_admin")])
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def paginated_user_list(update, context):
-    page = int(update.callback_query.data.split('_')[-1])
-    await show_user_list(update, context, page)
+    page = int(update.callback_query.data.split('_')[-1]); await show_user_list(update, context, page)
 
 async def user_detail_popup(update, context):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     uid = int(q.data.split('_')[1])
     user = await get_user(uid)
     text = f"👤 {user.get('first_name','N/A')} (@{user.get('username','')})\nID: {uid}\nCredits: {user['credits']}\nPremium: {'Yes' if user['is_premium'] else 'No'}\nBanned: {'Yes' if user['is_banned'] else 'No'}"
     await q.answer(text, show_alert=True)
 
 async def show_premium_list(update, context, page):
-    q = update.callback_query
-    limit = 10
-    offset = page * limit
+    q = update.callback_query; limit=10; offset=page*limit
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT user_id, username, first_name, premium_expiry FROM users WHERE is_premium=TRUE ORDER BY user_id LIMIT $1 OFFSET $2", limit, offset)
         total = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_premium=TRUE")
-    pages = max((total + limit - 1) // limit, 1)
+    pages = max((total+limit-1)//limit, 1)
     text = f"⭐ <b>Premium Users (Page {page+1}/{pages})</b>\n\n"
     kb = []
     for u in rows:
         uid, uname, fname, exp = u['user_id'], u['username'], u['first_name'], u['premium_expiry']
-        name = fname or str(uid)
-        exp_str = exp.strftime('%Y-%m-%d') if exp else 'Permanent'
+        name = fname or str(uid); exp_str = exp.strftime('%Y-%m-%d') if exp else 'Permanent'
         kb.append([InlineKeyboardButton(f"{name} | Exp: {exp_str}", callback_data=f"premdetail_{uid}")])
         kb.append([InlineKeyboardButton("❌ Remove", callback_data=f"remove_premium_{uid}")])
     nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"premiumlist_page_{page-1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"premiumlist_page_{page+1}"))
-    if nav:
-        kb.append(nav)
+    if page>0: nav.append(InlineKeyboardButton("◀️", callback_data=f"premiumlist_page_{page-1}"))
+    if page<pages-1: nav.append(InlineKeyboardButton("▶️", callback_data=f"premiumlist_page_{page+1}"))
+    if nav: kb.append(nav)
     kb.append([back_btn("menu_admin")])
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def paginated_premium_list(update, context):
-    page = int(update.callback_query.data.split('_')[-1])
-    await show_premium_list(update, context, page)
+    page = int(update.callback_query.data.split('_')[-1]); await show_premium_list(update, context, page)
 
 async def show_admin_list(update, context, page):
-    q = update.callback_query
-    limit = 10
-    offset = page * limit
-    admins = await get_admins_paginated(offset, limit)
-    total = await count_admins()
-    pages = max((total + limit - 1) // limit, 1)
+    q = update.callback_query; limit=10; offset=page*limit
+    admins = await get_admins_paginated(offset, limit); total = await count_admins()
+    pages = max((total+limit-1)//limit, 1)
     text = f"👑 <b>Admins (Page {page+1}/{pages})</b>\n\n"
     kb = []
     for a in admins:
         uid, uname, fname = a['user_id'], a['username'], a['first_name']
         name = fname or str(uid)
         kb.append([InlineKeyboardButton(f"{name}", callback_data=f"admindetail_{uid}")])
-        if uid != OWNER_ID:
-            kb.append([InlineKeyboardButton("❌ Demote", callback_data=f"admintoggle_{uid}")])
+        if uid != OWNER_ID: kb.append([InlineKeyboardButton("❌ Demote", callback_data=f"admintoggle_{uid}")])
     nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"adminlist_page_{page-1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"adminlist_page_{page+1}"))
-    if nav:
-        kb.append(nav)
+    if page>0: nav.append(InlineKeyboardButton("◀️", callback_data=f"adminlist_page_{page-1}"))
+    if page<pages-1: nav.append(InlineKeyboardButton("▶️", callback_data=f"adminlist_page_{page+1}"))
+    if nav: kb.append(nav)
     kb.append([back_btn("menu_admin")])
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def paginated_admin_list(update, context):
-    page = int(update.callback_query.data.split('_')[-1])
-    await show_admin_list(update, context, page)
+    page = int(update.callback_query.data.split('_')[-1]); await show_admin_list(update, context, page)
 
 async def show_keys_list(update, context, page):
-    q = update.callback_query
-    limit = 10
-    offset = page * limit
+    q = update.callback_query; limit=10; offset=page*limit
     async with pool.acquire() as conn:
         keys = await conn.fetch("SELECT key, created_by, expires_at, is_active, total_requests_allowed, requests_made FROM api_keys LIMIT $1 OFFSET $2", limit, offset)
         total = await conn.fetchval("SELECT COUNT(*) FROM api_keys")
-    pages = max((total + limit - 1) // limit, 1)
+    pages = max((total+limit-1)//limit, 1)
     text = f"🔑 <b>All Keys (Page {page+1}/{pages})</b>\n\n"
     kb = []
     for k in keys:
@@ -708,28 +584,23 @@ async def show_keys_list(update, context, page):
         if k['total_requests_allowed'] is not None:
             remaining = max(0, k['total_requests_allowed'] - k['requests_made'])
             req_info = f" | Req: {remaining}/{k['total_requests_allowed']}"
-        else:
-            req_info = " | Req: ∞"
+        else: req_info = " | Req: ∞"
         text += f"{status} <code>{k['key'][:20]}...</code> Exp: {k['expires_at'].strftime('%Y-%m-%d')}{req_info}\n"
         kb.append([InlineKeyboardButton(f"{'Deactivate' if k['is_active'] else 'Activate'}", callback_data=f"keytoggle_{k['key']}")])
+        kb.append([InlineKeyboardButton(f"🗑 Delete", callback_data=f"delete_key_{k['key']}")])
     nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"keys_page_{page-1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"keys_page_{page+1}"))
-    if nav:
-        kb.append(nav)
+    if page>0: nav.append(InlineKeyboardButton("◀️", callback_data=f"keys_page_{page-1}"))
+    if page<pages-1: nav.append(InlineKeyboardButton("▶️", callback_data=f"keys_page_{page+1}"))
+    if nav: kb.append(nav)
     kb.append([back_btn("menu_admin")])
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def paginated_keys_list(update, context):
-    page = int(update.callback_query.data.split('_')[-1])
-    await show_keys_list(update, context, page)
+    page = int(update.callback_query.data.split('_')[-1]); await show_keys_list(update, context, page)
 
 # ====================== ACTION HANDLERS ======================
 async def toggle_ban(update, context):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     uid = int(q.data.split('_')[-1])
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_banned = NOT is_banned WHERE user_id=$1", uid)
@@ -738,275 +609,202 @@ async def toggle_ban(update, context):
     await show_user_list(update, context, 0)
 
 async def add_credits_prompt(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = int(q.data.split('_')[-1])
-    context.user_data['target_user'] = uid
+    q = update.callback_query; await q.answer()
+    uid = int(q.data.split('_')[-1]); context.user_data['target_user'] = uid
     context.user_data['admin_state'] = 'awaiting_credit_amount'
     await q.edit_message_text(f"Amount to add for {uid}:", reply_markup=InlineKeyboardMarkup([[back_btn("admin_users")]]))
 
 async def remove_premium_handler(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = int(q.data.split('_')[-1])
-    await remove_premium(uid)
+    q = update.callback_query; await q.answer()
+    uid = int(q.data.split('_')[-1]); await remove_premium(uid)
     await q.answer("Premium removed.", show_alert=True)
     await show_premium_list(update, context, 0)
 
 async def make_premium_prompt(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = int(q.data.split('_')[-1])
-    context.user_data['target_premium_user'] = uid
+    q = update.callback_query; await q.answer()
+    uid = int(q.data.split('_')[-1]); context.user_data['target_premium_user'] = uid
     context.user_data['admin_state'] = 'awaiting_premium_days'
     await q.edit_message_text(f"Days for premium (or 'permanent'):", reply_markup=InlineKeyboardMarkup([[back_btn("admin_premium")]]))
 
 async def toggle_admin(update, context):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     uid = int(q.data.split('_')[1])
-    if uid == OWNER_ID:
-        await q.answer("Cannot demote main owner.", show_alert=True)
-        return
-    is_owner = await is_admin(uid)
-    await set_admin(uid, not is_owner)
+    if uid == OWNER_ID: await q.answer("Cannot demote main owner.", show_alert=True); return
+    is_owner = await is_admin(uid); await set_admin(uid, not is_owner)
     await q.answer(f"Admin {'removed' if is_owner else 'added'}.", show_alert=True)
     await show_admin_list(update, context, 0)
 
 async def toggle_key_status(update, context):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     key = q.data.split('_', 1)[1]
     async with pool.acquire() as conn:
         active = await conn.fetchval("SELECT is_active FROM api_keys WHERE key=$1", key)
-    if active:
-        await deactivate_api_key(key)
-        await q.answer("Key deactivated.", show_alert=True)
-    else:
-        await activate_api_key(key)
-        await q.answer("Key activated.", show_alert=True)
+    if active: await deactivate_api_key(key); await q.answer("Key deactivated.", show_alert=True)
+    else: await activate_api_key(key); await q.answer("Key activated.", show_alert=True)
     await show_keys_list(update, context, 0)
 
+# ====================== DELETE KEY ======================
+async def confirm_delete_key(update, context):
+    q = update.callback_query; await q.answer()
+    key = q.data.split("delete_key_", 1)[1]
+    context.user_data['del_key'] = key
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Yes, delete", callback_data=f"confirm_delete_key_{key}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="close_panel")]
+    ])
+    await q.edit_message_text(f"Delete key <code>{key[:20]}...</code>?", parse_mode='HTML', reply_markup=kb)
+
+async def execute_delete_key(update, context):
+    q = update.callback_query; await q.answer()
+    key = q.data.split("confirm_delete_key_", 1)[1]
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM api_keys WHERE key=$1", key)
+    await q.edit_message_text(f"✅ Key deleted: <code>{key[:20]}...</code>", parse_mode='HTML')
+
+# ====================== BROADCAST ======================
 async def broadcast_type(update, context):
-    q = update.callback_query
-    btype = q.data.split('_')[1]
+    q = update.callback_query; btype = q.data.split('_')[1]
     context.user_data['broadcast_type'] = btype
     await q.edit_message_text(f"Send the {btype} to broadcast:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
 
 # ====================== TEXT MESSAGE HANDLER ======================
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    text = update.message.text.strip()
+    uid = update.effective_user.id; text = update.message.text.strip()
 
     if context.user_data.get('awaiting_redeem'):
         context.user_data.pop('awaiting_redeem')
-        if await redeem_code(uid, text):
-            await update.message.reply_text("✅ Redeemed!")
-        else:
-            await update.message.reply_text("❌ Invalid/expired code.")
+        if await redeem_code(uid, text): await update.message.reply_text("✅ Redeemed!")
+        else: await update.message.reply_text("❌ Invalid/expired code.")
         return
 
-    if not await is_admin(uid):
-        return
+    if not await is_admin(uid): return
 
     state = context.user_data.get('admin_state')
-    if not state:
-        return
+    if not state: return
 
     if state == 'awaiting_user_for_credits':
-        try:
-            target = int(text)
-            context.user_data['target_user'] = target
-            context.user_data['admin_state'] = 'awaiting_credit_amount'
-            await update.message.reply_text("Amount:")
-        except:
-            await update.message.reply_text("Invalid ID.")
-            context.user_data.pop('admin_state', None)
+        try: target = int(text); context.user_data['target_user'] = target; context.user_data['admin_state'] = 'awaiting_credit_amount'; await update.message.reply_text("Amount:")
+        except: await update.message.reply_text("Invalid ID."); context.user_data.pop('admin_state', None)
     elif state == 'awaiting_credit_amount':
         try:
-            amt = int(text)
-            target = context.user_data.pop('target_user')
+            amt = int(text); target = context.user_data.pop('target_user')
             await add_credits(target, amt)
-            await update.message.reply_text(f"✅ Added {amt} credits to {target}.")
-            context.user_data.pop('admin_state', None)
-        except:
-            await update.message.reply_text("Invalid amount.")
+            await update.message.reply_text(f"✅ Added {amt} credits to {target}."); context.user_data.pop('admin_state', None)
+        except: await update.message.reply_text("Invalid amount.")
     elif state == 'awaiting_redeem_credits':
-        try:
-            creds = int(text)
-            context.user_data['redeem_creds'] = creds
-            context.user_data['admin_state'] = 'awaiting_redeem_maxuses'
-            await update.message.reply_text("Max uses:")
-        except:
-            await update.message.reply_text("Invalid number.")
+        try: creds = int(text); context.user_data['redeem_creds'] = creds; context.user_data['admin_state'] = 'awaiting_redeem_maxuses'; await update.message.reply_text("Max uses:")
+        except: await update.message.reply_text("Invalid number.")
     elif state == 'awaiting_redeem_maxuses':
         try:
-            maxu = int(text)
-            creds = context.user_data.pop('redeem_creds')
-            code = secrets.token_hex(4).upper()
-            await create_redeem_code(code, creds, uid, maxu)
+            maxu = int(text); creds = context.user_data.pop('redeem_creds')
+            code = secrets.token_hex(4).upper(); await create_redeem_code(code, creds, uid, maxu)
             await update.message.reply_text(f"✅ Code: <code>{code}</code>\nCredits: {creds}\nUses: {maxu}")
             context.user_data.pop('admin_state', None)
-        except:
-            await update.message.reply_text("Invalid number.")
+        except: await update.message.reply_text("Invalid number.")
     elif state == 'awaiting_dm_user':
-        try:
-            target = int(text)
-            context.user_data['dm_target'] = target
-            context.user_data['admin_state'] = 'awaiting_dm_message'
-            await update.message.reply_text("Message:")
-        except:
-            await update.message.reply_text("Invalid ID.")
+        try: target = int(text); context.user_data['dm_target'] = target; context.user_data['admin_state'] = 'awaiting_dm_message'; await update.message.reply_text("Message:")
+        except: await update.message.reply_text("Invalid ID.")
     elif state == 'awaiting_dm_message':
         target = context.user_data.pop('dm_target')
-        try:
-            await application.bot.send_message(target, text, parse_mode='HTML')
-            await update.message.reply_text("✅ Sent.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ {e}")
+        try: await application.bot.send_message(target, text, parse_mode='HTML'); await update.message.reply_text("✅ Sent.")
+        except Exception as e: await update.message.reply_text(f"❌ {e}")
         context.user_data.pop('admin_state', None)
     elif state == 'awaiting_bulkdm_ids':
-        ids = [int(x.strip()) for x in text.replace('\n', ',').split(',') if x.strip().isdigit()]
-        context.user_data['bulk_ids'] = ids
-        context.user_data['admin_state'] = 'awaiting_bulkdm_message'
+        ids = [int(x.strip()) for x in text.replace('\n',',').split(',') if x.strip().isdigit()]
+        context.user_data['bulk_ids'] = ids; context.user_data['admin_state'] = 'awaiting_bulkdm_message'
         await update.message.reply_text(f"Got {len(ids)} IDs. Send message:")
     elif state == 'awaiting_bulkdm_message':
-        ids = context.user_data.pop('bulk_ids')
-        success = 0
+        ids = context.user_data.pop('bulk_ids'); success = 0
         for i in ids:
-            try:
-                await application.bot.send_message(i, text, parse_mode='HTML')
-                success += 1
-                await asyncio.sleep(0.05)
-            except:
-                pass
-        await update.message.reply_text(f"✅ Sent to {success}/{len(ids)}.")
-        context.user_data.pop('admin_state', None)
+            try: await application.bot.send_message(i, text, parse_mode='HTML'); success += 1
+            except: pass
+            await asyncio.sleep(0.05)
+        await update.message.reply_text(f"✅ Sent to {success}/{len(ids)}."); context.user_data.pop('admin_state', None)
     elif state == 'awaiting_custom_key_string':
         key = text.strip()
-        if not key.startswith('ak_') or len(key) < 10:
-            await update.message.reply_text("Invalid key format. Must start with 'ak_' and length >= 10.")
-            return
+        if not key: await update.message.reply_text("Key cannot be empty. Send a valid key:"); return
         exists = await pool.fetchval("SELECT key FROM api_keys WHERE key=$1", key)
-        if exists:
-            await update.message.reply_text("Key already exists.")
-            return
-        context.user_data['cust_key'] = key
-        context.user_data['admin_state'] = 'awaiting_custom_key_expiry'
-        await update.message.reply_text("Expiry in days (e.g., 30):")
+        if exists: await update.message.reply_text("Key already exists. Choose another."); return
+        context.user_data['cust_key'] = key; context.user_data['admin_state'] = 'awaiting_custom_key_expiry'
+        await update.message.reply_text("Expiry in days (e.g., 30) or type 'permanent':")
     elif state == 'awaiting_custom_key_expiry':
-        try:
-            days = int(text)
-            context.user_data['cust_expiry'] = days
-        except:
-            await update.message.reply_text("Invalid number.")
-            return
+        if text.lower() == 'permanent': context.user_data['cust_expiry'] = 'permanent'
+        else:
+            try:
+                days = int(text)
+                if days <= 0: await update.message.reply_text("Days must be positive or type 'permanent'."); return
+                context.user_data['cust_expiry'] = days
+            except: await update.message.reply_text("Invalid number or type 'permanent'."); return
         context.user_data['admin_state'] = 'awaiting_custom_key_totalreq'
         await update.message.reply_text("Total requests allowed (0 for unlimited):")
     elif state == 'awaiting_custom_key_totalreq':
         try:
-            total = int(text)
-            context.user_data['cust_total'] = total if total > 0 else None
-        except:
-            await update.message.reply_text("Invalid number.")
-            return
+            total = int(text); context.user_data['cust_total'] = total if total > 0 else None
+        except: await update.message.reply_text("Invalid number."); return
         context.user_data['admin_state'] = 'awaiting_custom_key_ratelimit'
         await update.message.reply_text("Rate limit per minute:")
     elif state == 'awaiting_custom_key_ratelimit':
-        try:
-            rate = int(text)
-            context.user_data['cust_rate'] = rate
-        except:
-            await update.message.reply_text("Invalid number.")
-            return
-        await create_api_key(
-            context.user_data['cust_key'],
-            uid,
-            expires_days=context.user_data['cust_expiry'],
-            rate_limit=context.user_data['cust_rate'],
-            total_requests=context.user_data['cust_total'],
-            custom_name=f"{context.user_data['custkey_api'].upper()}_Custom"
-        )
+        try: rate = int(text); context.user_data['cust_rate'] = rate
+        except: await update.message.reply_text("Invalid number."); return
+        expiry_days = context.user_data['cust_expiry']
+        if expiry_days == 'permanent': expiry_days = 36500
+        await create_api_key(context.user_data['cust_key'], uid, expires_days=expiry_days, rate_limit=context.user_data['cust_rate'], total_requests=context.user_data['cust_total'], custom_name=f"{context.user_data['custkey_api'].upper()}_Custom")
         await log_key_gen(uid, context.user_data['cust_key'], context.user_data['custkey_api'])
+        api_type = context.user_data['custkey_api']
+        ex = API_ENDPOINTS[api_type]['param_example']
+        param_name = API_ENDPOINTS[api_type]['param_name']
+        endpoint = f"{RENDER_EXTERNAL_URL}/api/v1/{api_type}?key={context.user_data['cust_key']}&{param_name}={ex}"
         await update.message.reply_text(
-            f"✅ Custom key created:\n<code>{context.user_data['cust_key']}</code>\n"
-            f"Expiry: {context.user_data['cust_expiry']}d\n"
-            f"Requests: {context.user_data['cust_total'] if context.user_data['cust_total'] else 'Unlimited'}\n"
-            f"Rate: {context.user_data['cust_rate']}/min"
+            f"✅ <b>Custom Key Created!</b>\n\n"
+            f"🔑 <b>Key:</b> <code>{context.user_data['cust_key']}</code>\n"
+            f"📅 <b>Expiry:</b> {context.user_data['cust_expiry'] if expiry_days != 36500 else 'Permanent'} days\n"
+            f"📊 <b>Requests:</b> {context.user_data['cust_total'] if context.user_data['cust_total'] else 'Unlimited'}\n"
+            f"⚡ <b>Rate Limit:</b> {context.user_data['cust_rate']}/min\n\n"
+            f"🔗 <b>API Endpoint:</b>\n<code>{endpoint}</code>",
+            parse_mode='HTML'
         )
         context.user_data.pop('admin_state', None)
     elif state == 'awaiting_pricing_api':
-        if text.lower() in ['num', 'tg']:
-            context.user_data['pricing_api'] = text.lower()
-            context.user_data['admin_state'] = 'awaiting_pricing_plan'
-            await update.message.reply_text("Plan (weekly/monthly):")
-        else:
-            await update.message.reply_text("Invalid API.")
+        if text.lower() in ['num','tg']: context.user_data['pricing_api'] = text.lower(); context.user_data['admin_state'] = 'awaiting_pricing_plan'; await update.message.reply_text("Plan (weekly/monthly):")
+        else: await update.message.reply_text("Invalid API.")
     elif state == 'awaiting_pricing_plan':
-        if text.lower() in ['weekly', 'monthly']:
-            context.user_data['pricing_plan'] = text.lower()
-            context.user_data['admin_state'] = 'awaiting_pricing_credits'
-            await update.message.reply_text("New price (credits):")
-        else:
-            await update.message.reply_text("Invalid plan.")
+        if text.lower() in ['weekly','monthly']: context.user_data['pricing_plan'] = text.lower(); context.user_data['admin_state'] = 'awaiting_pricing_credits'; await update.message.reply_text("New price (credits):")
+        else: await update.message.reply_text("Invalid plan.")
     elif state == 'awaiting_pricing_credits':
         try:
-            price = int(text)
-            api = context.user_data.pop('pricing_api')
-            plan = context.user_data.pop('pricing_plan')
+            price = int(text); api = context.user_data.pop('pricing_api'); plan = context.user_data.pop('pricing_plan')
             async with pool.acquire() as conn:
                 await conn.execute("UPDATE api_plans SET price_credits=$1 WHERE api_type=$2 AND plan_name=$3", price, api, plan)
-            await update.message.reply_text(f"✅ Updated {api.upper()} {plan} = {price} credits.")
-            context.user_data.pop('admin_state', None)
-        except:
-            await update.message.reply_text("Invalid number.")
+            await update.message.reply_text(f"✅ Updated {api.upper()} {plan} = {price} credits."); context.user_data.pop('admin_state', None)
+        except: await update.message.reply_text("Invalid number.")
     elif state == 'awaiting_premium_user':
-        try:
-            target = int(text)
-            context.user_data['target_premium_user'] = target
-            context.user_data['admin_state'] = 'awaiting_premium_days'
-            await update.message.reply_text("Days (or 'permanent'):")
-        except:
-            await update.message.reply_text("Invalid ID.")
+        try: target = int(text); context.user_data['target_premium_user'] = target; context.user_data['admin_state'] = 'awaiting_premium_days'; await update.message.reply_text("Days (or 'permanent'):")
+        except: await update.message.reply_text("Invalid ID.")
     elif state == 'awaiting_premium_days':
-        days_txt = text.lower()
-        target = context.user_data.pop('target_premium_user')
-        if days_txt == 'permanent':
-            await set_premium(target, days=None)
+        days_txt = text.lower(); target = context.user_data.pop('target_premium_user')
+        if days_txt == 'permanent': await set_premium(target, days=None)
         else:
-            try:
-                await set_premium(target, days=int(days_txt))
-            except:
-                await update.message.reply_text("Invalid.")
-                return
-        await update.message.reply_text(f"✅ Premium set for {target}.")
-        context.user_data.pop('admin_state', None)
+            try: await set_premium(target, days=int(days_txt))
+            except: await update.message.reply_text("Invalid."); return
+        await update.message.reply_text(f"✅ Premium set for {target}."); context.user_data.pop('admin_state', None)
 
 # ====================== MEDIA BROADCAST ======================
 async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
+    if not await is_admin(update.effective_user.id): return
     btype = context.user_data.get('broadcast_type')
-    if not btype:
-        return
+    if not btype: return
     msg = update.message
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT user_id FROM users WHERE is_banned=FALSE")
-    users = [r['user_id'] for r in rows]
-    success = 0
+    users = [r['user_id'] for r in rows]; success = 0
     for uid in users:
         try:
-            if btype == 'text':
-                await application.bot.send_message(uid, msg.text, parse_mode='HTML')
-            elif btype == 'photo':
-                await application.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
-            elif btype == 'video':
-                await application.bot.send_video(uid, msg.video.file_id, caption=msg.caption or "")
-            elif btype == 'doc':
-                await application.bot.send_document(uid, msg.document.file_id, caption=msg.caption or "")
+            if btype == 'text': await application.bot.send_message(uid, msg.text, parse_mode='HTML')
+            elif btype == 'photo': await application.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
+            elif btype == 'video': await application.bot.send_video(uid, msg.video.file_id, caption=msg.caption or "")
+            elif btype == 'doc': await application.bot.send_document(uid, msg.document.file_id, caption=msg.caption or "")
             success += 1
-        except:
-            pass
+        except: pass
         await asyncio.sleep(0.05)
     context.user_data.pop('broadcast_type', None)
     await update.message.reply_text(f"✅ Broadcast to {success}/{len(users)} users.")
@@ -1017,19 +815,15 @@ async def self_ping():
     while True:
         await asyncio.sleep(SELF_PING_INTERVAL)
         try:
-            async with aiohttp.ClientSession() as s:
-                await s.get(f"{RENDER_EXTERNAL_URL}/health")
+            async with aiohttp.ClientSession() as s: await s.get(f"{RENDER_EXTERNAL_URL}/health")
             await application.bot.get_me()
-        except:
-            pass
+        except: pass
 
 async def premium_expiry_check():
     while True:
         await asyncio.sleep(3600)
         async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE users SET is_premium=FALSE WHERE is_premium=TRUE AND premium_expiry IS NOT NULL AND premium_expiry < NOW()"
-            )
+            await conn.execute("UPDATE users SET is_premium=FALSE WHERE is_premium=TRUE AND premium_expiry IS NOT NULL AND premium_expiry < NOW()")
 
 async def daily_backup():
     await asyncio.sleep(120)
@@ -1038,24 +832,20 @@ async def daily_backup():
         try:
             csv_data = await export_tables_to_csv()
             for table, content in csv_data.items():
-                if not content:
-                    continue
+                if not content: continue
                 await application.bot.send_document(
-                    chat_id=BACKUP_CHAT_ID,
-                    document=content.encode('utf-8'),
-                    filename=f"{table}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    chat_id=BACKUP_CHAT_ID, document=content.encode('utf-8'),
+                    filename=f"{table}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.csv",
                     caption=f"📁 {table}"
                 )
             await application.bot.send_message(BACKUP_CHAT_ID, "✅ Daily backup complete.")
-        except Exception as e:
-            logger.error(f"Backup failed: {e}")
+        except Exception as e: logger.error(f"Backup failed: {e}")
 
 # ====================== STARTUP / SHUTDOWN ======================
 async def on_startup():
     global http_session
     await init_db()
-    global pool                     # <-- POOL FIX LINE 1
-    pool = database.pool            # <-- POOL FIX LINE 2
+    global pool; pool = database.pool   # <-- POOL FIX
     http_session = aiohttp.ClientSession()
     await application.initialize()
     await application.bot.set_my_commands([
@@ -1067,10 +857,7 @@ async def on_startup():
         BotCommand("admin", "Admin panel")
     ])
     if BOT_MODE == "webhook":
-        await application.bot.set_webhook(
-            url=f"{RENDER_EXTERNAL_URL}/webhook",
-            secret_token=WEBHOOK_SECRET
-        )
+        await application.bot.set_webhook(url=f"{RENDER_EXTERNAL_URL}/webhook", secret_token=WEBHOOK_SECRET)
         logger.info(f"Webhook set to {RENDER_EXTERNAL_URL}/webhook")
     else:
         asyncio.create_task(application.run_polling())
@@ -1080,10 +867,8 @@ async def on_startup():
     asyncio.create_task(daily_backup())
 
 async def on_shutdown():
-    if http_session:
-        await http_session.close()
-    await application.stop()
-    await application.shutdown()
+    if http_session: await http_session.close()
+    await application.stop(); await application.shutdown()
     await close_db()
 
 # ====================== HANDLER REGISTRATION ======================
@@ -1110,6 +895,8 @@ application.add_handler(CallbackQueryHandler(make_premium_prompt, pattern="^make
 application.add_handler(CallbackQueryHandler(user_detail_popup, pattern="^userdetail_"))
 application.add_handler(CallbackQueryHandler(toggle_admin, pattern="^admintoggle_"))
 application.add_handler(CallbackQueryHandler(toggle_key_status, pattern="^keytoggle_"))
+application.add_handler(CallbackQueryHandler(confirm_delete_key, pattern="^delete_key_"))
+application.add_handler(CallbackQueryHandler(execute_delete_key, pattern="^confirm_delete_key_"))
 application.add_handler(CallbackQueryHandler(custom_key_type_selected, pattern="^custkey_"))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_broadcast_media))
