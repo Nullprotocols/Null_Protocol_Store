@@ -1,17 +1,17 @@
-# database.py - FINAL ASYNCPG VERSION (ALL FEATURES, NO ERRORS)
+# database.py - FINAL ASYNCPG VERSION (ULTRA FAST, ALL FEATURES, NO ERRORS)
 
 import asyncpg
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone   # <-- timezone added
 from config import DATABASE_URL, DEFAULT_PLANS
 
-# Global connection pool (initialized once at startup)
+# Global connection pool – optimized for speed
 pool = None
 
 async def init_db():
-    """Initialize database pool and create all tables if not exists."""
+    """Initialize database pool (5-20 connections) and create all tables."""
     global pool
-    pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=5, max_size=20)
 
     async with pool.acquire() as conn:
         # Users table
@@ -32,7 +32,7 @@ async def init_db():
             )
         """)
 
-        # API Keys table with request tracking
+        # API Keys (with request tracking)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS api_keys (
                 key TEXT PRIMARY KEY,
@@ -88,7 +88,7 @@ async def init_db():
             )
         """)
 
-        # Code redemptions (prevents duplicate use)
+        # Code redemptions
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS code_redemptions (
                 redemption_id SERIAL PRIMARY KEY,
@@ -99,7 +99,7 @@ async def init_db():
             )
         """)
 
-        # Insert or update default plans from config
+        # Insert/update default plans
         for api_type, plans in DEFAULT_PLANS.items():
             for plan_name, details in plans.items():
                 await conn.execute("""
@@ -110,7 +110,7 @@ async def init_db():
                         duration_days = EXCLUDED.duration_days
                 """, api_type, plan_name, details['credits'], details['days'])
 
-    print("✅ PostgreSQL tables & default plans ready.")
+    print("✅ PostgreSQL tables & plans ready (ultra‑fast pool).")
 
 # ====================== USER FUNCTIONS ======================
 async def get_user(user_id: int):
@@ -118,7 +118,7 @@ async def get_user(user_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
         if not row:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             await conn.execute(
                 "INSERT INTO users (user_id, joined_at, credits) VALUES ($1, $2, 0) ON CONFLICT DO NOTHING",
                 user_id, now
@@ -188,14 +188,14 @@ async def is_premium(user_id):
         row = await conn.fetchrow("SELECT is_premium, premium_expiry FROM users WHERE user_id=$1", user_id)
         if not row or not row['is_premium']:
             return False
-        if row['premium_expiry'] and row['premium_expiry'] < datetime.now():
+        if row['premium_expiry'] and row['premium_expiry'] < datetime.now(timezone.utc):
             await conn.execute("UPDATE users SET is_premium=FALSE WHERE user_id=$1", user_id)
             return False
         return True
 
 async def set_premium(user_id, days=None):
     """Grant premium for given days (None = permanent)."""
-    expiry = None if days is None else (datetime.now() + timedelta(days=days))
+    expiry = None if days is None else (datetime.now(timezone.utc) + timedelta(days=days))
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_premium=TRUE, premium_expiry=$1 WHERE user_id=$2", expiry, user_id)
 
@@ -220,8 +220,8 @@ async def generate_random_key():
     return f"ak_{secrets.token_hex(16)}"
 
 async def create_api_key(key, created_by, expires_days=30, rate_limit=80, total_requests=None, custom_name=""):
-    """Create a new API key with custom limits."""
-    expires_at = datetime.now() + timedelta(days=expires_days)
+    """Create a new API key with custom limits (uses timezone‑aware dates)."""
+    expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO api_keys (key, created_by, created_at, expires_at, rate_limit_per_min, total_requests_allowed, is_active, custom_name)
@@ -230,12 +230,12 @@ async def create_api_key(key, created_by, expires_days=30, rate_limit=80, total_
         """, key, created_by, expires_at, rate_limit, total_requests, custom_name)
 
 async def validate_api_key(key):
-    """Return (valid, created_by, rate_limit) for an API key."""
+    """Return (valid, created_by, rate_limit). Checks expiry and active status."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT created_by, expires_at, rate_limit_per_min, is_active FROM api_keys WHERE key=$1", key
         )
-        if not row or not row['is_active'] or row['expires_at'] < datetime.now():
+        if not row or not row['is_active'] or row['expires_at'] < datetime.now(timezone.utc):
             return False, None, None
         return True, row['created_by'], row['rate_limit_per_min']
 
@@ -294,7 +294,7 @@ async def create_subscription(user_id, api_type, plan_name):
     plan_id, price, days = plan
     if not await deduct_credits(user_id, price):
         return False
-    start = datetime.now()
+    start = datetime.now(timezone.utc)
     end = start + timedelta(days=days)
     async with pool.acquire() as conn:
         await conn.execute(
@@ -310,7 +310,7 @@ async def has_active_subscription(user_id, api_type):
             "SELECT end_date FROM user_subscriptions WHERE user_id=$1 AND api_type=$2 AND is_active=TRUE",
             user_id, api_type
         )
-        if row and row['end_date'] > datetime.now():
+        if row and row['end_date'] > datetime.now(timezone.utc):
             return True
         # Mark as inactive if expired
         if row:
@@ -323,7 +323,7 @@ async def has_active_subscription(user_id, api_type):
 # ====================== REDEEM CODE FUNCTIONS ======================
 async def create_redeem_code(code, credits, created_by, max_uses=1, expires_days=None):
     """Create a new redeem code."""
-    expires = None if expires_days is None else (datetime.now() + timedelta(days=expires_days))
+    expires = None if expires_days is None else (datetime.now(timezone.utc) + timedelta(days=expires_days))
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO redeem_codes (code, credits_value, created_by, created_at, expires_at, max_uses) VALUES ($1,$2,$3,NOW(),$4,$5)",
@@ -338,7 +338,7 @@ async def redeem_code(user_id, code):
         )
         if not row or not row['is_active'] or row['used_count'] >= row['max_uses']:
             return False
-        if row['expires_at'] and row['expires_at'] < datetime.now():
+        if row['expires_at'] and row['expires_at'] < datetime.now(timezone.utc):
             return False
         # Check if user already used this code
         already = await conn.fetchval(
