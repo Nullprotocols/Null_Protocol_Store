@@ -1,4 +1,4 @@
-# config.py - FINAL PRODUCTION VERSION (ULTRA FAST - ALL FEATURES)
+# config.py - FINAL PRODUCTION VERSION (BRANDING REMOVAL FIXED)
 
 import os
 
@@ -25,7 +25,6 @@ PORT = int(os.getenv("PORT", "10000"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("❌ DATABASE_URL missing!")
-# asyncpg requires "postgresql://" prefix
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -42,7 +41,7 @@ SELF_PING_INTERVAL = int(os.getenv("SELF_PING_INTERVAL", "240"))
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
 
 # ------------------------------------------------------------
-# 6. BRANDING
+# 6. BRANDING (Tumhari apni branding – ye add hogi)
 # ------------------------------------------------------------
 BRANDING = {
     "developer": os.getenv("BRANDING_DEVELOPER", "@Nullprotocol_x"),
@@ -52,10 +51,11 @@ BRANDING = {
 }
 
 # ------------------------------------------------------------
-# 7. GLOBAL BLACKLIST (fields to strip)
+# 7. GLOBAL BLACKLIST – Har API response se ye fields hamesha hata do
 # ------------------------------------------------------------
 GLOBAL_BLACKLIST = [
-    "copyright", "signature", "credit", "source"
+    "copyright", "signature", "credit", "source",
+    "developer", "powered_by", "support", "website"   # <-- add kar diye taaki kisi bhi API mein ye fields dikhen nahi
 ]
 
 # ------------------------------------------------------------
@@ -73,7 +73,7 @@ FORCE_JOIN_CHANNELS = [
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
 # ------------------------------------------------------------
-# 10. API ENDPOINTS (Phone & Telegram Username)
+# 10. API ENDPOINTS (extra_blacklist only for API-specific fields)
 # ------------------------------------------------------------
 API_ENDPOINTS = {
     "num": {
@@ -84,7 +84,7 @@ API_ENDPOINTS = {
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
-        "extra_blacklist": ["timestamp", "proxy" , "input"],
+        "extra_blacklist": ["timestamp", "proxy", "input"],   # API-specific unwanted fields
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True
@@ -98,7 +98,10 @@ API_ENDPOINTS = {
         "param_example": "@InvalidAnand",
         "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "extra_blacklist": [
-            "developer", "expiry", "req_total", "req_left"
+            "is_verified", "id", "has_profile_pic", "first_name",
+            "is_scam", "credit", "common_chats", "bio", "username", "target",
+            "is_fake", "type", "public_view", "is_bot",
+            "expiry", "req_total", "req_left"   # tumhare custom fields agar nahi chahiye to
         ],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
@@ -110,14 +113,8 @@ API_ENDPOINTS = {
 # 11. SUBSCRIPTION PLANS & PRICING
 # ------------------------------------------------------------
 DEFAULT_PLANS = {
-    "num": {
-        "weekly": {"credits": 15, "days": 7},
-        "monthly": {"credits": 30, "days": 30}
-    },
-    "tg": {
-        "weekly": {"credits": 15, "days": 7},
-        "monthly": {"credits": 30, "days": 30}
-    }
+    "num": {"weekly": {"credits": 15, "days": 7}, "monthly": {"credits": 30, "days": 30}},
+    "tg":  {"weekly": {"credits": 15, "days": 7}, "monthly": {"credits": 30, "days": 30}}
 }
 
 # ------------------------------------------------------------
@@ -137,15 +134,15 @@ OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Nullprotocol_x")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Nullprotocol_x")
 
 # ------------------------------------------------------------
-# 15. DEFAULT RATE LIMIT (for new keys)
+# 15. DEFAULT RATE LIMIT
 # ------------------------------------------------------------
 DEFAULT_RATE_LIMIT_PER_MIN = int(os.getenv("DEFAULT_RATE_LIMIT", "80"))
 
 # ------------------------------------------------------------
-# 16. BACKUP SETTINGS (Daily CSV to owner DM)
+# 16. BACKUP SETTINGS
 # ------------------------------------------------------------
 BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
-BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))  # default: owner
+BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))
 
 # ------------------------------------------------------------
 # 17. DEBUG & LOGGING
