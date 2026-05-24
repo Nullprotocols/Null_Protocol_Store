@@ -46,7 +46,7 @@ ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
 BRANDING = {
     "developer": os.getenv("BRANDING_DEVELOPER", "@Nullprotocol_x"),
     "powered_by": os.getenv("BRANDING_POWERED", "NULL PROTOCOL"),
-    "support": os.getenv("BRANDING_SUPPORT", "@Nullprotocol_x"),
+    "support": os.getenv("BRANDING_SUPPORT", "https://t.me/osint_father_NP"),
     "website": "https://t.me/Nullprotocol_x"
 }
 
