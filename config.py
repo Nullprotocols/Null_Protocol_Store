@@ -96,7 +96,7 @@ API_ENDPOINTS = {
         "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
         "param_name": "username",
         "param_example": "@mrmeowmeow3",
-        "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
+        "param_validation": r"^(@?[a-zA-Z][a-zA-Z0-9_]{4,31}|\d+)$",
         "extra_blacklist": [
             "expiry", "req_total", "req_left"   # tumhare custom fields agar nahi chahiye to
         ],
