@@ -1,4 +1,4 @@
-# config.py - FINAL PRODUCTION VERSION (BRANDING REMOVAL FIXED)
+# config.py - FINAL PRODUCTION VERSION (GOOGLE SHEETS + IP INTELLIGENCE)
 
 import os
 
@@ -20,7 +20,7 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://null-protocol-ap
 PORT = int(os.getenv("PORT", "10000"))
 
 # ------------------------------------------------------------
-# 3. DATABASE (PostgreSQL – internal URL from env)
+# 3. DATABASE (PostgreSQL)
 # ------------------------------------------------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -29,19 +29,19 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # ------------------------------------------------------------
-# 4. CACHE (In‑memory, Redis optional)
+# 4. CACHE
 # ------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", None)
-CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # seconds
+CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
 
 # ------------------------------------------------------------
-# 5. AUTO-PING (Keep alive)
+# 5. AUTO-PING
 # ------------------------------------------------------------
 SELF_PING_INTERVAL = int(os.getenv("SELF_PING_INTERVAL", "240"))
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
 
 # ------------------------------------------------------------
-# 6. BRANDING (Tumhari apni branding – ye add hogi)
+# 6. BRANDING
 # ------------------------------------------------------------
 BRANDING = {
     "developer": os.getenv("BRANDING_DEVELOPER", "@Nullprotocol_x"),
@@ -51,11 +51,11 @@ BRANDING = {
 }
 
 # ------------------------------------------------------------
-# 7. GLOBAL BLACKLIST – Har API response se ye fields hamesha hata do
+# 7. GLOBAL BLACKLIST
 # ------------------------------------------------------------
 GLOBAL_BLACKLIST = [
     "copyright", "signature", "credit", "source",
-    "developer", "powered_by", "support", "website"   # <-- add kar diye taaki kisi bhi API mein ye fields dikhen nahi
+    "developer", "powered_by", "support", "website"
 ]
 
 # ------------------------------------------------------------
@@ -73,7 +73,7 @@ FORCE_JOIN_CHANNELS = [
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
 # ------------------------------------------------------------
-# 10. API ENDPOINTS (extra_blacklist only for API-specific fields)
+# 10. API ENDPOINTS
 # ------------------------------------------------------------
 API_ENDPOINTS = {
     "num": {
@@ -84,22 +84,20 @@ API_ENDPOINTS = {
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
-        "extra_blacklist": ["timestamp", "proxy", "input"],   # API-specific unwanted fields
+        "extra_blacklist": ["timestamp", "proxy", "input"],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True
     },
     "tg": {
         "name": "Telegram Username to Number",
-        "description": "Get phone number and details from a Telegram username",
+        "description": "Get phone number and details from a Telegram username or user ID",
         "url_template": "https://rootx-osint.in/?type=tg_num&key={api_key}&query={param}",
         "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
         "param_name": "username",
-        "param_example": "@mrmeowmeow3",
+        "param_example": "@mrmeowmeow3 ya 123456789",
         "param_validation": r"^(@?[a-zA-Z][a-zA-Z0-9_]{4,31}|\d+)$",
-        "extra_blacklist": [
-            "expiry", "req_total", "req_left"   # tumhare custom fields agar nahi chahiye to
-        ],
+        "extra_blacklist": ["expiry", "req_total", "req_left"],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True
@@ -107,7 +105,7 @@ API_ENDPOINTS = {
 }
 
 # ------------------------------------------------------------
-# 11. SUBSCRIPTION PLANS & PRICING
+# 11. PLANS
 # ------------------------------------------------------------
 DEFAULT_PLANS = {
     "num": {"weekly": {"credits": 15, "days": 7}, "monthly": {"credits": 30, "days": 30}},
@@ -115,12 +113,12 @@ DEFAULT_PLANS = {
 }
 
 # ------------------------------------------------------------
-# 12. REFERRAL SYSTEM
+# 12. REFERRAL
 # ------------------------------------------------------------
 REFERRAL_REWARD_CREDITS = int(os.getenv("REFERRAL_REWARD_CREDITS", "3"))
 
 # ------------------------------------------------------------
-# 13. PREMIUM USER SETTINGS
+# 13. PREMIUM
 # ------------------------------------------------------------
 PREMIUM_EXEMPT_FORCE_JOIN = os.getenv("PREMIUM_EXEMPT_FORCE_JOIN", "False").lower() == "true"
 
@@ -131,24 +129,35 @@ OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Nullprotocol_x")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Nullprotocol_x")
 
 # ------------------------------------------------------------
-# 15. DEFAULT RATE LIMIT
+# 15. RATE LIMIT
 # ------------------------------------------------------------
 DEFAULT_RATE_LIMIT_PER_MIN = int(os.getenv("DEFAULT_RATE_LIMIT", "80"))
 
 # ------------------------------------------------------------
-# 16. BACKUP SETTINGS
+# 16. BACKUP
 # ------------------------------------------------------------
 BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))
 
 # ------------------------------------------------------------
-# 17. DEBUG & LOGGING
+# 17. GOOGLE SHEETS CONFIGURATION (NEW)
+# ------------------------------------------------------------
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1fn5yyUZmOAbX6bBafL3L4lrHxHLuaiBpaq4JoqxHOhE")
+GSHEET_CREDS = os.getenv("GSHEET_CREDS", "")  # base64 encoded service account JSON
+
+# ------------------------------------------------------------
+# 18. IP INTELLIGENCE CONFIGURATION (NEW)
+# ------------------------------------------------------------
+IP_API_URL = os.getenv("IP_API_URL", "http://ip-api.com/json/{}")  # {} replaced by IP
+
+# ------------------------------------------------------------
+# 19. DEBUG
 # ------------------------------------------------------------
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-print("✅ CONFIG LOADED - POSTGRESQL + BACKUP + CUSTOM KEYS (ULTRA FAST)")
+print("✅ CONFIG LOADED - POSTGRESQL + GOOGLE SHEETS + IP INTELLIGENCE")
 print(f"🚀 Bot Mode: {BOT_MODE.upper()}")
 print(f"👑 Owner ID: {OWNER_ID}")
-print(f"📢 Log Channel: {LOG_CHANNEL_ID}")
-print(f"💾 Database: PostgreSQL (internal URL)")
+print(f"📊 Google Sheet ID: {GOOGLE_SHEET_ID[:20]}...")
+print(f"💾 Database: PostgreSQL")
