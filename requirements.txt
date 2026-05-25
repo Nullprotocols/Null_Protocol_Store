@@ -1,4 +1,4 @@
-# requirements.txt - FINAL PRODUCTION DEPENDENCIES (ULTRA-FAST)
+# requirements.txt - FINAL PRODUCTION DEPENDENCIES (GOOGLE SHEETS READY)
 
 Quart==0.19.6
 Flask==3.0.0
@@ -8,3 +8,5 @@ python-telegram-bot==21.10
 asyncpg==0.29.0
 python-dotenv==1.0.0
 tenacity==8.3.0
+gspread==6.1.4
+google-auth==2.38.0
