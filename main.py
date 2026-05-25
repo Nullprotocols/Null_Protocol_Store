@@ -1,6 +1,5 @@
-# main.py - FINAL ULTRA-FAST VERSION (ALL FEATURES, NO SKIPPING)
-# PostgreSQL, Custom Keys (flexible + permanent), Delete Keys,
-# Backup, Force Join, Admin Panel, Commands, Ultra-Fast Response
+# main.py - FINAL PRODUCTION VERSION (GOOGLE SHEETS + IP INTELLIGENCE)
+# All original features + attractive sheet logging + IP tracking
 
 import json, asyncio, secrets, time, re, aiohttp, logging, os
 from datetime import datetime, timedelta, timezone
@@ -16,6 +15,7 @@ from telegram.ext import (
 from config import *
 from database import *
 import database                    # <-- Fix for pool reference
+from sheets import init_sheets, log_api_call   # <-- Google Sheets integration
 
 # Logging
 logging.basicConfig(
@@ -120,6 +120,39 @@ async def proxy_api(api_type):
         return jsonify({"error": str(e)}), 502
 
     cleaned = remove_branding(data, cfg.get('extra_blacklist', []))
+
+    # ============ IP LOOKUP & SHEET LOGGING ============
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip and ',' in client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+
+    async def background_log():
+        try:
+            ip_info = {"ip": client_ip}
+            # IP lookup using ip-api.com
+            try:
+                ip_url = IP_API_URL.format(client_ip) if IP_API_URL else f"http://ip-api.com/json/{client_ip}"
+                async with http_session.get(ip_url, timeout=aiohttp.ClientTimeout(total=5)) as ip_resp:
+                    if ip_resp.status == 200:
+                        ip_info = await ip_resp.json()
+            except Exception as e:
+                logger.warning(f"IP lookup failed: {e}")
+
+            # Log to Google Sheets (clean data without branding)
+            await log_api_call(
+                api_type=api_type,
+                api_key=key,
+                input_value=param_value,
+                client_ip=client_ip,
+                ip_info=ip_info,
+                response_data=cleaned
+            )
+        except Exception as e:
+            logger.error(f"Background log error: {e}")
+
+    asyncio.create_task(background_log())
+    # ============ END IP LOOKUP & SHEET LOGGING ============
+
     cleaned['branding'] = BRANDING
     pretty = json.dumps(cleaned, indent=2, ensure_ascii=False)
     await set_cached(cache_key, pretty)
@@ -846,6 +879,7 @@ async def on_startup():
     global http_session
     await init_db()
     global pool; pool = database.pool   # <-- POOL FIX
+    init_sheets()                       # <-- INIT GOOGLE SHEETS
     http_session = aiohttp.ClientSession()
     await application.initialize()
     await application.bot.set_my_commands([
