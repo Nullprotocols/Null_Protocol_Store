@@ -1,4 +1,4 @@
-# requirements.txt - FINAL PRODUCTION DEPENDENCIES (GOOGLE SHEETS READY)
+# requirements.txt - FINAL PRODUCTION DEPENDENCIES (ALL APIs + REDIS + FAST JSON)
 
 Quart==0.19.6
 Flask==3.0.0
@@ -10,3 +10,5 @@ python-dotenv==1.0.0
 tenacity==8.3.0
 gspread==6.1.4
 google-auth==2.38.0
+redis[hiredis]==5.0.1
+orjson==3.10.12
