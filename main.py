@@ -2,7 +2,7 @@
 
 import json, asyncio, secrets, time, re, aiohttp, logging, os
 from datetime import datetime, timedelta, timezone
-from quart import Quart, request, jsonify, make_response
+from quart import Quart, request, jsonify
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     BotCommand
@@ -16,13 +16,10 @@ from database import *
 import database                    # needed for pool reference
 from sheets import init_sheets, log_api_call
 
-# ------------------------------------------------------------------
 # Optional ultra-fast modules
-# ------------------------------------------------------------------
 try:
     import uvloop
     uvloop.install()
-    logger_uv = logging.getLogger(__name__)
 except ImportError:
     pass
 
@@ -117,7 +114,7 @@ async def fetch_upstream(session, url):
         return await resp.json()
 
 # ------------------------------------------------------------------
-# Gzip compression middleware
+# Gzip compression middleware (for faster responses)
 # ------------------------------------------------------------------
 @app.after_request
 async def add_gzip(response):
@@ -299,7 +296,7 @@ def admin_panel_kb():
 back_btn = lambda data: InlineKeyboardButton("🔙 Back", callback_data=data)
 
 # ------------------------------------------------------------------
-# Force Join
+# Force Join (with safe exception handling)
 # ------------------------------------------------------------------
 async def check_force_join(user_id):
     if await is_admin(user_id): return True, []
@@ -309,7 +306,9 @@ async def check_force_join(user_id):
         try:
             mem = await application.bot.get_chat_member(chat_id=ch['id'], user_id=user_id)
             if mem.status in ['left', 'kicked']: missing.append(ch)
-        except: missing.append(ch)
+        except Exception as e:
+            logger.warning(f"Force join check failed for {ch['id']}: {e}")
+            missing.append(ch)   # treat as not joined on any error
     return len(missing) == 0, missing
 
 async def send_force_join(chat_id, missing):
@@ -337,6 +336,14 @@ async def log_key_gen(user_id, key, api_type):
 # ------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; uid = user.id
+
+    # --- Cooldown: ignore duplicate start within 10 seconds ---
+    now = time.time()
+    last_start = context.user_data.get('last_start_time', 0)
+    if now - last_start < 10:
+        return  # silently ignore duplicate
+    context.user_data['last_start_time'] = now
+
     await update_user_info(uid, user.username, user.first_name, user.last_name)
     if context.args and context.args[0].startswith('ref_'):
         try:
@@ -1163,6 +1170,8 @@ if __name__ == '__main__':
     from hypercorn.config import Config
     config = Config()
     config.bind = [f"0.0.0.0:{PORT}"]
+    config.graceful_timeout = 5
+    config.keep_alive_timeout = 30
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(on_startup())
