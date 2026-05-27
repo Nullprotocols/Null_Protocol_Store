@@ -62,7 +62,7 @@ GLOBAL_BLACKLIST = [
 ]
 
 # ------------------------------------------------------------
-# 8. FORCE JOIN CHANNELS (now env-variable friendly)
+# 8. FORCE JOIN CHANNELS (env-variable friendly)
 # ------------------------------------------------------------
 FORCE_JOIN_CHANNELS = [
     {
