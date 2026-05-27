@@ -1,4 +1,4 @@
-# config.py - ULTRA FAST PRODUCTION VERSION (ALL 20+ APIs, NORMALIZATION, CUSTOM MESSAGES)
+# config.py - FINAL PRODUCTION VERSION (ALL 20+ APIs, NORMALIZATION, CUSTOM MESSAGES)
 
 import os
 import re
@@ -107,13 +107,17 @@ def normalize_username(value: str) -> str:
     """Strip and remove leading @."""
     return value.strip().lstrip('@')
 
+def normalize_aadhaar(value: str) -> str:
+    """Remove spaces."""
+    return re.sub(r'\s', '', value)
+
 # ====================== ENDPOINTS ======================
 API_ENDPOINTS = {
     # --------------------------------------------------------
     # Existing APIs (improved)
     # --------------------------------------------------------
     "num": {
-        "name": "Phone Number Info",
+        "name": "📞 Phone Number Info",
         "description": "Get basic information about a phone number",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/Number?Number={param}&key={api_key}",
         "external_api_key": os.getenv("NUM_API_KEY", ""),
@@ -129,7 +133,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid key! Buy a new one for Phone Number Info: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "tg": {
-        "name": "Telegram Username to Number",
+        "name": "💬 Telegram Username to Number",
         "description": "Get phone number and details from a Telegram username or user ID",
         "url_template": "https://rootx-osint.in/?type=tg_num&key={api_key}&query={param}",
         "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
@@ -149,7 +153,7 @@ API_ENDPOINTS = {
     # NEW APIs (from your list)
     # --------------------------------------------------------
     "mobile": {
-        "name": "Mobile Number Info (Alt)",
+        "name": "📱 Mobile Number Info (Alt)",
         "description": "Details of a mobile number (alternate)",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/mobile?number={param}&key={api_key}",
         "external_api_key": os.getenv("MOBILE_API_KEY", ""),
@@ -157,7 +161,7 @@ API_ENDPOINTS = {
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
         "preprocess": normalize_phone_10_digit,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -165,15 +169,15 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid key for Mobile Info. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "aadhaar": {
-        "name": "Aadhaar Details",
+        "name": "🆔 Aadhaar Details",
         "description": "⚠️ Sensitive. Use legally.",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/aadhaar?id={param}&key={api_key}",
         "external_api_key": os.getenv("AADHAAR_API_KEY", ""),
         "param_name": "id",
         "param_example": "123456789012",
         "param_validation": r"^\d{12}$",
-        "preprocess": lambda x: re.sub(r'\s', '', x),
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "preprocess": normalize_aadhaar,
+        "extra_blacklist": [],
         "rate_limit_per_min": 20,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": False,  # disabled by default (legal)
@@ -181,7 +185,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid Aadhaar key. Contact admin."
     },
     "email": {
-        "name": "Email Lookup",
+        "name": "✉️ Email Lookup",
         "description": "Check info for an email address",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/email?address={param}&key={api_key}",
         "external_api_key": os.getenv("EMAIL_API_KEY", ""),
@@ -189,7 +193,7 @@ API_ENDPOINTS = {
         "param_example": "test@example.com",
         "param_validation": r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
         "preprocess": normalize_email,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 50,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -197,7 +201,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid key for Email. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "gst": {
-        "name": "GST Verification",
+        "name": "💰 GST Verification",
         "description": "Verify GST number",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/gst?number={param}&key={api_key}",
         "external_api_key": os.getenv("GST_API_KEY", ""),
@@ -205,15 +209,15 @@ API_ENDPOINTS = {
         "param_example": "27ABCDE1234F1Z5",
         "param_validation": r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$",
         "preprocess": normalize_upper_alphanum,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 60,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
         "expired_message": "GST key expired. Renew: https://t.me/+yLGfzldPjsc0NzU1",
         "invalid_message": "Invalid GST key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
-    "telegram_alt": {  # renamed from 'telegram' to avoid conflict with 'tg'
-        "name": "Telegram Lookup (Alt)",
+    "telegram_alt": {
+        "name": "💬 Telegram Lookup (Alt)",
         "description": "Alternate Telegram username to number",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/telegram?user={param}&key={api_key}",
         "external_api_key": os.getenv("TELEGRAM_ALT_API_KEY", ""),
@@ -221,7 +225,7 @@ API_ENDPOINTS = {
         "param_example": "username",
         "param_validation": r"^[a-zA-Z][a-zA-Z0-9_]{4,31}$",
         "preprocess": normalize_username,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 70,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -229,7 +233,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid Telegram Alt key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "ifsc": {
-        "name": "IFSC Code Lookup",
+        "name": "🏦 IFSC Code Lookup",
         "description": "Bank details from IFSC",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/ifsc?code={param}&key={api_key}",
         "external_api_key": os.getenv("IFSC_API_KEY", ""),
@@ -237,7 +241,7 @@ API_ENDPOINTS = {
         "param_example": "SBIN0001234",
         "param_validation": r"^[A-Z]{4}0[A-Z0-9]{6}$",
         "preprocess": normalize_ifsc,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -245,15 +249,15 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid IFSC key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "rashan": {
-        "name": "Ration Card (Aadhaar linked)",
+        "name": "🍚 Ration Card (Aadhaar linked)",
         "description": "Ration details via Aadhaar",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/rashan?aadhaar={param}&key={api_key}",
         "external_api_key": os.getenv("RASHAN_API_KEY", ""),
         "param_name": "aadhaar",
         "param_example": "123456789012",
         "param_validation": r"^\d{12}$",
-        "preprocess": lambda x: re.sub(r'\s', '', x),
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "preprocess": normalize_aadhaar,
+        "extra_blacklist": [],
         "rate_limit_per_min": 30,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": False,
@@ -261,7 +265,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid ration card key. Contact admin."
     },
     "upi": {
-        "name": "UPI ID Lookup",
+        "name": "💳 UPI ID Lookup",
         "description": "Check UPI ID details",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/upi?id={param}&key={api_key}",
         "external_api_key": os.getenv("UPI_API_KEY", ""),
@@ -269,7 +273,7 @@ API_ENDPOINTS = {
         "param_example": "user@upi",
         "param_validation": r"^[\w\.\-]+@[\w\.\-]+$",
         "preprocess": normalize_upi,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 70,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -277,7 +281,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid UPI key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "upi2": {
-        "name": "UPI ID Lookup (v2)",
+        "name": "💳 UPI ID Lookup (v2)",
         "description": "Alternate UPI lookup",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/upi2?id={param}&key={api_key}",
         "external_api_key": os.getenv("UPI2_API_KEY", ""),
@@ -285,7 +289,7 @@ API_ENDPOINTS = {
         "param_example": "user@upi",
         "param_validation": r"^[\w\.\-]+@[\w\.\-]+$",
         "preprocess": normalize_upi,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 70,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -293,7 +297,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid UPI v2 key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "vehicle_reg": {
-        "name": "Vehicle Registration",
+        "name": "🚗 Vehicle Registration",
         "description": "Vehicle details by registration number",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/vehicle?registration={param}&key={api_key}",
         "external_api_key": os.getenv("VEHICLE_REG_API_KEY", ""),
@@ -301,7 +305,7 @@ API_ENDPOINTS = {
         "param_example": "UP32AB1234",
         "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$",
         "preprocess": normalize_vehicle,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 70,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -309,7 +313,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid vehicle reg key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "vehicle_to_number": {
-        "name": "Vehicle to Phone Number",
+        "name": "🚙 Vehicle to Phone Number",
         "description": "Find mobile number linked to vehicle",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/v2?query={param}&key={api_key}",
         "external_api_key": os.getenv("VEHICLE_TO_NUMBER_API_KEY", ""),
@@ -317,7 +321,7 @@ API_ENDPOINTS = {
         "param_example": "up57bk8721",
         "param_validation": r"^[A-Z0-9]+$",
         "preprocess": normalize_vehicle,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 60,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -325,7 +329,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid Vehicle-to-Number key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "pan": {
-        "name": "PAN Verification",
+        "name": "🪪 PAN Verification",
         "description": "PAN card details",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/pan?pan={param}&key={api_key}",
         "external_api_key": os.getenv("PAN_API_KEY", ""),
@@ -333,7 +337,7 @@ API_ENDPOINTS = {
         "param_example": "ABCDE1234F",
         "param_validation": r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$",
         "preprocess": normalize_upper_alphanum,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 30,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": False,  # legal caution
@@ -341,7 +345,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid PAN key. Contact admin."
     },
     "fastag": {
-        "name": "FASTag Info",
+        "name": "🚘 FASTag Info",
         "description": "FASTag details via vehicle number",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/fastag?vrn={param}&key={api_key}",
         "external_api_key": os.getenv("FASTAG_API_KEY", ""),
@@ -349,7 +353,7 @@ API_ENDPOINTS = {
         "param_example": "UP32AB1234",
         "param_validation": r"^[A-Z0-9]+$",
         "preprocess": normalize_vehicle,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 60,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -357,7 +361,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid FASTag key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "challan": {
-        "name": "Traffic Challan",
+        "name": "📜 Traffic Challan",
         "description": "Traffic challan details",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/challan?vrn={param}&key={api_key}",
         "external_api_key": os.getenv("CHALLAN_API_KEY", ""),
@@ -365,7 +369,7 @@ API_ENDPOINTS = {
         "param_example": "UP32AB1234",
         "param_validation": r"^[A-Z0-9]+$",
         "preprocess": normalize_vehicle,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 60,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -373,7 +377,7 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid challan key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "gas": {
-        "name": "Gas Connection",
+        "name": "🔥 Gas Connection",
         "description": "Gas connection info by phone number",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/gas?num={param}&key={api_key}",
         "external_api_key": os.getenv("GAS_API_KEY", ""),
@@ -381,23 +385,23 @@ API_ENDPOINTS = {
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
         "preprocess": normalize_phone_10_digit,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
         "expired_message": "Gas key expired. Renew: https://t.me/+yLGfzldPjsc0NzU1",
         "invalid_message": "Invalid gas key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
-    "number_info_backup": {  # alternate phone info (Number endpoint)
-        "name": "Phone Info (Backup)",
-        "description": "Alternate phone number info",
+    "number_info_backup": {
+        "name": "📞 Phone Info (Backup)",
+        "description": "Alternate phone number info (same as Number endpoint)",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/Number?Number={param}&key={api_key}",
         "external_api_key": os.getenv("NUMBER_BACKUP_API_KEY", ""),
         "param_name": "Number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
         "preprocess": normalize_phone_10_digit,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 80,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
@@ -405,40 +409,55 @@ API_ENDPOINTS = {
         "invalid_message": "Invalid Phone backup key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
     "vehicle_backup": {
-        "name": "Vehicle Backup API",
-        "description": "Alternative vehicle lookup",
+        "name": "🚛 Vehicle Backup API",
+        "description": "Alternative vehicle lookup (v3)",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/v3?Vehicle%20Backup={param}&key={api_key}",
         "external_api_key": os.getenv("VEHICLE_BACKUP_API_KEY", ""),
         "param_name": "Vehicle Backup",
         "param_example": "UP32AB1234",
         "param_validation": r"^[A-Z0-9]+$",
         "preprocess": normalize_vehicle,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 60,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
         "expired_message": "Vehicle Backup key expired. Renew: https://t.me/+yLGfzldPjsc0NzU1",
         "invalid_message": "Invalid Vehicle Backup key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
+    "vi_sim_photo": {
+        "name": "📷 Vi SIM Info & Photo",
+        "description": "Vi SIM details with photo (fixed URL)",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/photo?vi={param}&key={api_key}",
+        "external_api_key": os.getenv("VI_SIM_PHOTO_API_KEY", ""),
+        "param_name": "vi",
+        "param_example": "1234567890",
+        "param_validation": r"^\d{10}$",
+        "preprocess": normalize_phone_10_digit,
+        "extra_blacklist": [],
+        "rate_limit_per_min": 70,
+        "log_channel": LOG_CHANNEL_ID,
+        "enabled": True,
+        "expired_message": "Vi SIM photo key expired. Renew: https://t.me/+yLGfzldPjsc0NzU1",
+        "invalid_message": "Invalid Vi SIM photo key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
+    },
     "vi_sim_info": {
-        "name": "Vi SIM Info",
-        "description": "Vi SIM card information",
+        "name": "📶 Vi SIM Info",
+        "description": "Vi SIM card information (v4)",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/v4?Vi%20photo={param}&key={api_key}",
         "external_api_key": os.getenv("VI_API_KEY", ""),
         "param_name": "Vi photo",
         "param_example": "1234567890",
         "param_validation": r"^\d{10}$",
         "preprocess": normalize_phone_10_digit,
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 70,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": True,
         "expired_message": "Vi SIM key expired. Renew: https://t.me/+yLGfzldPjsc0NzU1",
         "invalid_message": "Invalid Vi SIM key. Buy: https://t.me/+yLGfzldPjsc0NzU1"
     },
-    # "vi_sim_photo" omitted due to malformed URL; add manually after fixing URL
     "drive": {
-        "name": "Drive Lookup",
+        "name": "📁 Drive Lookup",
         "description": "Google Drive or file lookup (to be defined)",
         "url_template": "https://anuapi.netlify.app/.netlify/functions/api/drive?drive={param}&key={api_key}",
         "external_api_key": os.getenv("DRIVE_API_KEY", ""),
@@ -446,7 +465,7 @@ API_ENDPOINTS = {
         "param_example": "???",
         "param_validation": r"^.+$",
         "preprocess": lambda x: x.strip(),
-        "extra_blacklist": ["timestamp", "proxy", "input"],
+        "extra_blacklist": [],
         "rate_limit_per_min": 30,
         "log_channel": LOG_CHANNEL_ID,
         "enabled": False,  # incomplete, enable after clarity
