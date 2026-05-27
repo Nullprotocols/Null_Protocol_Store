@@ -1,7 +1,6 @@
-# requirements.txt - FINAL PRODUCTION DEPENDENCIES (GOOGLE SHEETS READY)
+# requirements.txt - UPGRADED PRODUCTION DEPENDENCIES
 
 Quart==0.19.6
-Flask==3.0.0
 hypercorn==0.17.3
 aiohttp==3.9.5
 python-telegram-bot==21.10
