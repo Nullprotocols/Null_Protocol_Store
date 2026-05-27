@@ -1,4 +1,4 @@
-# config.py - FINAL PRODUCTION VERSION (ALL APIs + REDIS + GOOGLE SHEETS + IP INTELLIGENCE)
+# config.py - FINAL PRODUCTION VERSION (ALL APIs + REDIS + IP INTELLIGENCE + POSTGRESQL LOGGING)
 
 import os
 
@@ -400,18 +400,12 @@ BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))
 
 # ------------------------------------------------------------
-# 17. GOOGLE SHEETS CONFIGURATION
-# ------------------------------------------------------------
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1fn5yyUZmOAbX6bBafL3L4lrHxHLuaiBpaq4JoqxHOhE")
-GSHEET_CREDS = os.getenv("GSHEET_CREDS", "")   # base64 encoded service account JSON
-
-# ------------------------------------------------------------
-# 18. IP INTELLIGENCE
+# 17. IP INTELLIGENCE
 # ------------------------------------------------------------
 IP_API_URL = os.getenv("IP_API_URL", "http://ip-api.com/json/{}")
 
 # ------------------------------------------------------------
-# 19. CUSTOM ERROR RESPONSES (can be overridden per API via admin panel)
+# 18. CUSTOM ERROR RESPONSES (can be overridden per API via admin panel)
 # ------------------------------------------------------------
 DEFAULT_ERROR_RESPONSES = {
     "expired_key": "⚠️ Your API subscription has expired.\nPlease renew your API access to continue using the services.\n\nSupport & Renewal:\nhttps://t.me/+yLGfzldPjsc0NzU1",
@@ -423,13 +417,12 @@ DEFAULT_ERROR_RESPONSES = {
 }
 
 # ------------------------------------------------------------
-# 20. DEBUG
+# 19. DEBUG
 # ------------------------------------------------------------
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-print("✅ CONFIG LOADED - ALL APIs + REDIS + GOOGLE SHEETS + IP INTELLIGENCE")
+print("✅ CONFIG LOADED - ALL APIs + REDIS + IP INTELLIGENCE + POSTGRESQL LOGGING")
 print(f"🚀 Bot Mode: {BOT_MODE.upper()}")
 print(f"👑 Owner ID: {OWNER_ID}")
-print(f"📊 Google Sheet ID: {GOOGLE_SHEET_ID[:20]}...")
 print(f"💾 Database: PostgreSQL + Redis {'(enabled)' if REDIS_URL else '(disabled)'}")
