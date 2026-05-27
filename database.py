@@ -1,7 +1,8 @@
-# database.py - FINAL ASYNCPG VERSION (ULTRA FAST, ALL FEATURES, NO ERRORS)
+# database.py - FINAL ASYNCPG VERSION (ULTRA FAST, ALL FEATURES, NO ERRORS + POSTGRESQL LOGGING)
 
 import asyncpg
 import secrets
+import json
 from datetime import datetime, timedelta, timezone
 from config import DATABASE_URL, DEFAULT_PLANS
 
@@ -96,6 +97,22 @@ async def init_db():
                 code TEXT NOT NULL,
                 redeemed_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(user_id, code)
+            )
+        """)
+
+        # API Call Logs (PostgreSQL logging)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS api_logs (
+                id SERIAL PRIMARY KEY,
+                api_type TEXT NOT NULL,
+                api_key TEXT,
+                input_value TEXT,
+                client_ip TEXT,
+                country TEXT,
+                city TEXT,
+                isp TEXT,
+                response_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
@@ -402,6 +419,40 @@ async def export_tables_to_csv():
                 lines.append(','.join(values))
             csv_files[table] = '\n'.join(lines)
     return csv_files
+
+# ====================== API LOGGING (POSTGRESQL) ======================
+async def log_api_call_to_db(api_type, api_key, input_value, client_ip, ip_info, response_data):
+    """Insert API call log into PostgreSQL."""
+    async with pool.acquire() as conn:
+        masked_key = api_key[:12] + "..." if len(api_key) > 12 else api_key
+        country = ip_info.get("country", "N/A") if ip_info else "N/A"
+        city = ip_info.get("city", "N/A") if ip_info else "N/A"
+        isp = ip_info.get("isp", "N/A") if ip_info else "N/A"
+        response_json = json.dumps(response_data, ensure_ascii=False)
+        await conn.execute("""
+            INSERT INTO api_logs (api_type, api_key, input_value, client_ip, country, city, isp, response_json)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        """, api_type, masked_key, input_value, client_ip, country, city, isp, response_json)
+
+async def get_all_logs_json():
+    """Return all logs as a list of dicts, ready for JSON export."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM api_logs ORDER BY created_at DESC")
+        logs = []
+        for r in rows:
+            logs.append({
+                "id": r['id'],
+                "api_type": r['api_type'],
+                "api_key": r['api_key'],
+                "input_value": r['input_value'],
+                "client_ip": r['client_ip'],
+                "country": r['country'],
+                "city": r['city'],
+                "isp": r['isp'],
+                "response": r['response_json'],
+                "created_at": r['created_at'].isoformat()
+            })
+        return logs
 
 # ====================== CLEANUP ======================
 async def close_db():
