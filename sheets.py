@@ -1,4 +1,4 @@
-# sheets.py - GOOGLE SHEETS INTEGRATION (ALL APIs, DYNAMIC TABS, OPTIMIZED)
+# sheets.py - GOOGLE SHEETS INTEGRATION WITH ATTRACTIVE DESIGN
 
 import json
 import base64
@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import gspread
 from google.oauth2.service_account import Credentials
-from config import GOOGLE_SHEET_ID, GSHEET_CREDS, API_ENDPOINTS
+from config import GOOGLE_SHEET_ID, GSHEET_CREDS
 
 logger = logging.getLogger(__name__)
 
@@ -17,30 +17,10 @@ gc = None
 sheet = None
 worksheet_cache = {}
 
-# Tab names for every API type (matching keys in API_ENDPOINTS)
+# Tab names
 TAB_NAMES = {
-    "num": "📞 Phone Info",
-    "tg": "💬 Telegram Info",
-    "mobile": "📱 Mobile Alt",
-    "aadhaar": "🆔 Aadhaar",
-    "email": "✉️ Email Lookup",
-    "gst": "💰 GST Verification",
-    "telegram_alt": "💬 Telegram Alt",
-    "ifsc": "🏦 IFSC Code",
-    "rashan": "🍚 Ration Card",
-    "upi": "💳 UPI Lookup",
-    "upi2": "💳 UPI v2",
-    "vehicle_reg": "🚗 Vehicle Reg",
-    "vehicle_to_number": "🚙 Vehicle→Phone",
-    "pan": "🪪 PAN Card",
-    "fastag": "🚘 FASTag",
-    "challan": "📜 Traffic Challan",
-    "gas": "🔥 Gas Connection",
-    "number_info_backup": "📞 Phone Backup",
-    "vehicle_backup": "🚛 Vehicle Backup",
-    "vi_sim_photo": "📷 Vi SIM & Photo",
-    "vi_sim_info": "📶 Vi SIM Info",
-    "drive": "📁 Drive Lookup"
+    "num": "📱 Phone Logs",
+    "tg": "💬 Telegram Logs"
 }
 
 # Headers for each tab
@@ -55,19 +35,19 @@ HEADERS = [
     "Response JSON"
 ]
 
-# Column widths (pixels)
+# Column widths (approximate pixel count)
 COL_WIDTHS = [160, 200, 150, 130, 100, 120, 200, 400]
 
-# Colors
-DARK_BLUE = {"red": 0.102, "green": 0.459, "blue": 0.91}   # #1a73e8
+# Colors (Google Sheets hex format without #)
+DARK_BLUE = {"red": 0.102, "green": 0.459, "blue": 0.91}  # #1a73e8
 WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
-LIGHT_BLUE = {"red": 0.91, "green": 0.94, "blue": 0.98}    # #e8f0fe
+LIGHT_BLUE = {"red": 0.91, "green": 0.94, "blue": 0.98}  # #e8f0fe
 
 
 def init_sheets():
     """
-    Initialize Google Sheets connection, create tabs for all APIs (if not exist),
-    and apply formatting only to newly created ones.
+    Initialize Google Sheets connection, create formatted tabs if they don't exist.
+    Call once at startup.
     """
     global gc, sheet
 
@@ -86,18 +66,16 @@ def init_sheets():
         sheet = gc.open_by_key(GOOGLE_SHEET_ID)
         logger.info(f"✅ Connected to Google Sheet: {sheet.title}")
 
-        # Ensure a tab exists for every API type in the config
-        for api_type in API_ENDPOINTS:
-            tab_name = TAB_NAMES.get(api_type, f"📊 {api_type.upper()}")
+        # Create tabs if not exist and apply formatting
+        for api_type, tab_name in TAB_NAMES.items():
             try:
                 ws = sheet.worksheet(tab_name)
-                logger.info(f"📄 Found existing tab: {tab_name}")
             except gspread.exceptions.WorksheetNotFound:
                 ws = sheet.add_worksheet(title=tab_name, rows=1000, cols=len(HEADERS))
                 logger.info(f"📄 Created new tab: {tab_name}")
-                _apply_formatting(ws, tab_name)
 
             worksheet_cache[api_type] = ws
+            _apply_formatting(ws, tab_name)
 
         return True
 
@@ -108,12 +86,14 @@ def init_sheets():
 
 def _apply_formatting(ws, tab_name):
     """
-    Apply attractive formatting to a NEW worksheet tab:
+    Apply attractive formatting to a worksheet tab:
     - Dark blue header with white bold text
     - Frozen first row
-    - Column widths
+    - Column auto-resize
     - Alternating row colors via conditional formatting
     """
+    num_cols = len(HEADERS)
+
     try:
         # 1. Set headers
         ws.update(values=[HEADERS], range_name="A1")
@@ -134,7 +114,7 @@ def _apply_formatting(ws, tab_name):
         # 3. Freeze first row
         ws.freeze(rows=1)
 
-        # 4. Set column widths via batch update
+        # 4. Set column widths (using batch update for efficiency)
         requests = []
         for i, width in enumerate(COL_WIDTHS):
             requests.append({
@@ -156,7 +136,8 @@ def _apply_formatting(ws, tab_name):
             except Exception as e:
                 logger.warning(f"Column resize warning: {e}")
 
-        # 5. Alternating row colors
+        # 5. Apply alternating row colors (conditional formatting)
+        # Formula: =ISEVEN(ROW()) to color even rows light blue
         try:
             ws.add_conditional_formatting(
                 "A2:H1000",
@@ -171,7 +152,7 @@ def _apply_formatting(ws, tab_name):
         except Exception as e:
             logger.warning(f"Conditional formatting warning: {e}")
 
-        logger.info(f"🎨 Formatting applied to new tab: {tab_name}")
+        logger.info(f"🎨 Formatting applied to tab: {tab_name}")
 
     except Exception as e:
         logger.error(f"❌ Formatting error for {tab_name}: {e}")
@@ -180,7 +161,16 @@ def _apply_formatting(ws, tab_name):
 def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, response_data):
     """
     Synchronously log an API call to Google Sheet.
-    This is designed to be run in a thread to avoid blocking the async event loop.
+    This function is designed to be run in a thread (via asyncio.to_thread)
+    to avoid blocking the async event loop.
+
+    Args:
+        api_type: 'num' or 'tg'
+        api_key: The API key used (will be masked)
+        input_value: Phone number or username
+        client_ip: Client's IP address
+        ip_info: Dict with ip details (country, city, isp, etc.)
+        response_data: Clean API response (without branding)
     """
     if not gc or not sheet:
         return
@@ -188,14 +178,8 @@ def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, respon
     try:
         ws = worksheet_cache.get(api_type)
         if not ws:
-            # Fallback: create tab if missing (should not happen normally)
-            tab_name = TAB_NAMES.get(api_type, f"📊 {api_type.upper()}")
-            try:
-                ws = sheet.worksheet(tab_name)
-            except gspread.exceptions.WorksheetNotFound:
-                ws = sheet.add_worksheet(title=tab_name, rows=1000, cols=len(HEADERS))
-                _apply_formatting(ws, tab_name)
-            worksheet_cache[api_type] = ws
+            logger.warning(f"No worksheet found for {api_type}")
+            return
 
         # Prepare row data
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -210,11 +194,11 @@ def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, respon
         # Append row
         ws.append_row(row, value_input_option="USER_ENTERED")
 
-        # Auto-clean: keep max 5000 rows
+        # Auto-clean: keep max 5000 rows (delete oldest 100 if exceeded)
         try:
-            total_rows = ws.row_count
+            total_rows = len(ws.get_all_values())
             if total_rows > 5000:
-                ws.delete_rows(2, 100)  # delete rows 2-101, header stays
+                ws.delete_rows(2, 100)  # Delete rows 2-101 (header untouched)
         except Exception:
             pass
 
@@ -225,7 +209,7 @@ def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, respon
 async def log_api_call(api_type, api_key, input_value, client_ip, ip_info, response_data):
     """
     Async wrapper that runs the sync log function in a thread pool.
-    Called as a background task from the API route.
+    This is called from the Quart route as a background task.
     """
     try:
         await asyncio.to_thread(
