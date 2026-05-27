@@ -1,5 +1,4 @@
-# config.py - UPGRADED PRODUCTION VERSION
-# All 19 APIs + Har API ka alag plan + Google Sheets (env var)
+# config.py - FINAL PRODUCTION VERSION (ALL APIs + REDIS + GOOGLE SHEETS + IP INTELLIGENCE)
 
 import os
 
@@ -11,7 +10,10 @@ if not TELEGRAM_BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN missing!")
 
 OWNER_ID = int(os.getenv("OWNER_ID", "8104850843"))
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "NullProtocol_SuperSecret_2024")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+if not WEBHOOK_SECRET:
+    raise ValueError("❌ WEBHOOK_SECRET missing! Set a strong secret token in env vars.")
+
 BOT_MODE = os.getenv("BOT_MODE", "webhook")
 
 # ------------------------------------------------------------
@@ -30,13 +32,13 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # ------------------------------------------------------------
-# 4. CACHE
+# 4. CACHE & RATE LIMITING (Redis)
 # ------------------------------------------------------------
-REDIS_URL = os.getenv("REDIS_URL", None)
+REDIS_URL = os.getenv("REDIS_URL", None)   # Upstash or any Redis instance URL
 CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
 
 # ------------------------------------------------------------
-# 5. AUTO-PING
+# 5. AUTO-PING (Keep Render alive)
 # ------------------------------------------------------------
 SELF_PING_INTERVAL = int(os.getenv("SELF_PING_INTERVAL", "240"))
 ENABLE_SELF_PING = os.getenv("ENABLE_SELF_PING", "True").lower() == "true"
@@ -52,7 +54,7 @@ BRANDING = {
 }
 
 # ------------------------------------------------------------
-# 7. GLOBAL BLACKLIST
+# 7. GLOBAL BLACKLIST (fields removed from API responses)
 # ------------------------------------------------------------
 GLOBAL_BLACKLIST = [
     "copyright", "signature", "credit", "source",
@@ -60,12 +62,24 @@ GLOBAL_BLACKLIST = [
 ]
 
 # ------------------------------------------------------------
-# 8. FORCE JOIN CHANNELS
+# 8. FORCE JOIN CHANNELS (now env-variable friendly)
 # ------------------------------------------------------------
 FORCE_JOIN_CHANNELS = [
-    {"id": -1003090922367, "link": "https://t.me/all_data_here",        "name": "All Data Here"},
-    {"id": -1003698567122, "link": "https://t.me/osint_lookup",         "name": "OSINT Lookup"},
-    {"id": -1003672015073, "link": "https://t.me/legend_chats_osint",   "name": "LEGEND CHATS"}
+    {
+        "id": int(os.getenv("FJ_CH1_ID", "-1003090922367")),
+        "link": os.getenv("FJ_CH1_LINK", "https://t.me/all_data_here"),
+        "name": "All Data Here"
+    },
+    {
+        "id": int(os.getenv("FJ_CH2_ID", "-1003698567122")),
+        "link": os.getenv("FJ_CH2_LINK", "https://t.me/osint_lookup"),
+        "name": "OSINT Lookup"
+    },
+    {
+        "id": int(os.getenv("FJ_CH3_ID", "-1003672015073")),
+        "link": os.getenv("FJ_CH3_LINK", "https://t.me/legend_chats_osint"),
+        "name": "LEGEND CHATS"
+    }
 ]
 
 # ------------------------------------------------------------
@@ -74,316 +88,289 @@ FORCE_JOIN_CHANNELS = [
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003624886596"))
 
 # ------------------------------------------------------------
-# 10. API ENDPOINTS  (19 APIs — har ek ka alag plan)
+# 10. ALL API ENDPOINTS (20+ APIs integrated)
 # ------------------------------------------------------------
-_BASE = "https://anuapi.netlify.app/.netlify/functions/api"
-_KEY  = os.getenv("ANUAPI_KEY", "")   # single upstream key for all anuapi endpoints
-
 API_ENDPOINTS = {
-
-    # ── TELECOM ──────────────────────────────────────────────
+    # ----- EXISTING APIs -----
     "num": {
-        "name": "📞 Phone Number Info",
-        "description": "Get basic info about a phone number",
-        "url_template": f"{_BASE}/Number?Number={{param}}&key={{api_key}}",
-        "external_api_key": os.getenv("NUM_API_KEY", _KEY),
+        "name": "Phone Number Info",
+        "description": "Get basic information about a phone number",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/Number?Number={param}&key={api_key}",
+        "external_api_key": os.getenv("NUM_API_KEY", ""),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
         "extra_blacklist": ["timestamp", "proxy", "input"],
         "rate_limit_per_min": 80,
-        "category": "telecom",
-        "enabled": True,
+        "log_channel": LOG_CHANNEL_ID,
+        "enabled": True
     },
+    "tg": {
+        "name": "Telegram Username to Number",
+        "description": "Get phone number and details from a Telegram username or user ID",
+        "url_template": "https://rootx-osint.in/?type=tg_num&key={api_key}&query={param}",
+        "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
+        "param_name": "username",
+        "param_example": "@mrmeowmeow3 ya 123456789",
+        "param_validation": r"^(@?[a-zA-Z][a-zA-Z0-9_]{4,31}|\d+)$",
+        "extra_blacklist": ["expiry", "req_total", "req_left"],
+        "rate_limit_per_min": 80,
+        "log_channel": LOG_CHANNEL_ID,
+        "enabled": True
+    },
+
+    # ----- NEW APIs (from your list) -----
     "mobile": {
-        "name": "📱 Mobile Number Lookup",
-        "description": "Detailed mobile number intelligence",
-        "url_template": f"{_BASE}/mobile?number={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
+        "name": "Mobile Number Info",
+        "description": "Get mobile number details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/mobile?number={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
-        "extra_blacklist": ["timestamp", "proxy"],
-        "rate_limit_per_min": 80,
-        "category": "telecom",
-        "enabled": True,
+        "extra_blacklist": [],
+        "rate_limit_per_min": 50,
+        "enabled": True
     },
-    "vi": {
-        "name": "🟣 Vi SIM Info & Photo",
-        "description": "Vi SIM subscriber info with photo",
-        "url_template": f"{_BASE}/photo?/vi={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "number",
-        "param_example": "9876543210",
-        "param_validation": r"^\d{10}$",
-        "extra_blacklist": ["timestamp"],
-        "rate_limit_per_min": 60,
-        "category": "telecom",
-        "enabled": True,
-    },
-    "vi2": {
-        "name": "🟣 Vi SIM Info (v2)",
-        "description": "Vi SIM subscriber details (alternate endpoint)",
-        "url_template": f"{_BASE}/v4?Vi%20photo={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "number",
-        "param_example": "9876543210",
-        "param_validation": r"^\d{10}$",
-        "extra_blacklist": ["timestamp"],
-        "rate_limit_per_min": 60,
-        "category": "telecom",
-        "enabled": True,
-    },
-
-    # ── IDENTITY ─────────────────────────────────────────────
     "aadhaar": {
-        "name": "🪪 Aadhaar Lookup",
-        "description": "Aadhaar card details",
-        "url_template": f"{_BASE}/aadhaar?id={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
+        "name": "Aadhaar Info",
+        "description": "Get Aadhaar details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/aadhaar?id={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
         "param_name": "aadhaar",
         "param_example": "123456789012",
         "param_validation": r"^\d{12}$",
         "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "identity",
-        "enabled": True,
+        "rate_limit_per_min": 30,
+        "enabled": True
     },
-    "pan": {
-        "name": "💳 PAN Card Lookup",
-        "description": "PAN card holder details",
-        "url_template": f"{_BASE}/pan?pan={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "pan",
-        "param_example": "ABCDE1234F",
-        "param_validation": r"^[A-Z]{5}\d{4}[A-Z]$",
+    "email": {
+        "name": "Email Lookup",
+        "description": "Get email address info",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/email?address={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "email",
+        "param_example": "test@example.com",
+        "param_validation": r"^[\w\.-]+@[\w\.-]+\.\w{2,}$",
         "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "identity",
-        "enabled": True,
-    },
-    "rashan": {
-        "name": "🍚 Ration Card Lookup",
-        "description": "Ration card details via Aadhaar",
-        "url_template": f"{_BASE}/rashan?aadhaar={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "aadhaar",
-        "param_example": "123456789012",
-        "param_validation": r"^\d{12}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "identity",
-        "enabled": True,
-    },
-
-    # ── VEHICLE ──────────────────────────────────────────────
-    "vehicle": {
-        "name": "🚗 Vehicle Registration",
-        "description": "Vehicle RC details by registration number",
-        "url_template": f"{_BASE}/vehicle?registration={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "registration",
-        "param_example": "UP32AB1234",
-        "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 80,
-        "category": "vehicle",
-        "enabled": True,
-    },
-    "vehicle2num": {
-        "name": "🚗➡️📞 Vehicle to Number",
-        "description": "Get owner phone number from vehicle registration",
-        "url_template": f"{_BASE}/v2?query={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "registration",
-        "param_example": "UP57BK8721",
-        "param_validation": r"^[A-Za-z]{2}\d{2}[A-Za-z]{1,2}\d{4}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "vehicle",
-        "enabled": True,
-    },
-    "vehicle_backup": {
-        "name": "🚗💾 Vehicle Backup",
-        "description": "Vehicle backup data lookup",
-        "url_template": f"{_BASE}/v3?Vehicle%20Backup={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "registration",
-        "param_example": "UP32AB1234",
-        "param_validation": r"^[A-Za-z]{2}\d{2}[A-Za-z]{1,2}\d{4}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "vehicle",
-        "enabled": True,
-    },
-    "fastag": {
-        "name": "🏷️ FASTag Lookup",
-        "description": "FASTag details by vehicle registration",
-        "url_template": f"{_BASE}/fastag?vrn={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "registration",
-        "param_example": "UP32AB1234",
-        "param_validation": r"^[A-Za-z]{2}\d{2}[A-Za-z]{1,2}\d{4}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "vehicle",
-        "enabled": True,
-    },
-    "challan": {
-        "name": "🚦 Challan Check",
-        "description": "Traffic challan by vehicle registration",
-        "url_template": f"{_BASE}/challan?vrn={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "registration",
-        "param_example": "UP32AB1234",
-        "param_validation": r"^[A-Za-z]{2}\d{2}[A-Za-z]{1,2}\d{4}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "vehicle",
-        "enabled": True,
-    },
-    "drive": {
-        "name": "🪪 Driving License",
-        "description": "Driving license details lookup",
-        "url_template": f"{_BASE}/drive?drive={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "license",
-        "param_example": "UP1420110012345",
-        "param_validation": r"^[A-Z]{2}\d{2,4}\d{7,11}$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "vehicle",
-        "enabled": True,
-    },
-
-    # ── FINANCE ──────────────────────────────────────────────
-    "upi": {
-        "name": "💸 UPI Lookup",
-        "description": "UPI VPA / ID details",
-        "url_template": f"{_BASE}/upi?id={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "upi_id",
-        "param_example": "user@upi",
-        "param_validation": r"^[\w.\-]+@[\w]+$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 80,
-        "category": "finance",
-        "enabled": True,
-    },
-    "upi2": {
-        "name": "💸 UPI Lookup v2",
-        "description": "UPI VPA details (alternate endpoint)",
-        "url_template": f"{_BASE}/upi2?id={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "upi_id",
-        "param_example": "user@upi",
-        "param_validation": r"^[\w.\-]+@[\w]+$",
-        "extra_blacklist": [],
-        "rate_limit_per_min": 80,
-        "category": "finance",
-        "enabled": True,
+        "rate_limit_per_min": 30,
+        "enabled": True
     },
     "gst": {
-        "name": "🧾 GST Lookup",
+        "name": "GST Verification",
         "description": "GST number details",
-        "url_template": f"{_BASE}/gst?number={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "gst",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/gst?number={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "gstin",
         "param_example": "27ABCDE1234F1Z5",
-        "param_validation": r"^\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]$",
+        "param_validation": r"^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$",
         "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "finance",
-        "enabled": True,
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "telegram": {
+        "name": "Telegram Lookup",
+        "description": "Telegram username info",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/telegram?user={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "username",
+        "param_example": "username",
+        "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 50,
+        "enabled": True
     },
     "ifsc": {
-        "name": "🏦 IFSC Lookup",
-        "description": "Bank branch details by IFSC code",
-        "url_template": f"{_BASE}/ifsc?code={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
+        "name": "IFSC Code Lookup",
+        "description": "Bank details from IFSC",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/ifsc?code={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
         "param_name": "ifsc",
         "param_example": "SBIN0001234",
         "param_validation": r"^[A-Z]{4}0[A-Z0-9]{6}$",
         "extra_blacklist": [],
-        "rate_limit_per_min": 100,
-        "category": "finance",
-        "enabled": True,
+        "rate_limit_per_min": 50,
+        "enabled": True
+    },
+    "rashan": {
+        "name": "Ration Card Info",
+        "description": "Ration card details via Aadhaar",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/rashan?aadhaar={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "aadhaar",
+        "param_example": "123456789012",
+        "param_validation": r"^\d{12}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "upi": {
+        "name": "UPI Lookup",
+        "description": "Get UPI ID details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/upi?id={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "upi_id",
+        "param_example": "user@upi",
+        "param_validation": r"^[\w\.\-]+@[\w]+$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 50,
+        "enabled": True
+    },
+    "upi2": {
+        "name": "UPI Lookup v2",
+        "description": "Alternative UPI details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/upi2?id={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "upi_id",
+        "param_example": "user@upi",
+        "param_validation": r"^[\w\.\-]+@[\w]+$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 50,
+        "enabled": True
+    },
+    "vehicle": {
+        "name": "Vehicle Registration",
+        "description": "Vehicle RC details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/vehicle?registration={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "reg_no",
+        "param_example": "UP32AB1234",
+        "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{2}\d{4}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "vehicle2": {
+        "name": "Vehicle to Number",
+        "description": "Vehicle registration alternative lookup",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/v2?query={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "reg_no",
+        "param_example": "UP57BK8721",
+        "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{2}\d{4}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "pan": {
+        "name": "PAN Verification",
+        "description": "PAN card details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/pan?pan={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "pan",
+        "param_example": "ABCDE1234F",
+        "param_validation": r"^[A-Z]{5}\d{4}[A-Z]$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "fastag": {
+        "name": "FASTag Info",
+        "description": "FASTag vehicle details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/fastag?vrn={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "reg_no",
+        "param_example": "UP32AB1234",
+        "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{2}\d{4}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "challan": {
+        "name": "Challan Lookup",
+        "description": "Traffic challan details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/challan?vrn={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "reg_no",
+        "param_example": "UP32AB1234",
+        "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{2}\d{4}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
     },
     "gas": {
-        "name": "⛽ Gas Connection Lookup",
-        "description": "Gas consumer details by mobile number",
-        "url_template": f"{_BASE}/gas?num={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
+        "name": "Gas Cylinder Info",
+        "description": "Gas connection details by mobile",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/gas?num={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
         "param_name": "number",
         "param_example": "9876543210",
         "param_validation": r"^\d{10}$",
         "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "finance",
-        "enabled": True,
+        "rate_limit_per_min": 30,
+        "enabled": True
     },
-
-    # ── SOCIAL / DIGITAL ─────────────────────────────────────
-    "tg": {
-        "name": "✈️ Telegram Username → Number",
-        "description": "Get phone number from Telegram username or user ID",
-        "url_template": "https://rootx-osint.in/?type=tg_num&key={api_key}&query={param}",
-        "external_api_key": os.getenv("TG_API_KEY", "null_protocol"),
-        "param_name": "username",
-        "param_example": "@mrmeowmeow3 or 123456789",
-        "param_validation": r"^(@?[a-zA-Z][a-zA-Z0-9_]{4,31}|\d+)$",
-        "extra_blacklist": ["expiry", "req_total", "req_left"],
-        "rate_limit_per_min": 80,
-        "category": "social",
-        "enabled": True,
-    },
-    "telegram": {
-        "name": "✈️ Telegram User Lookup",
-        "description": "Telegram user details by username",
-        "url_template": f"{_BASE}/telegram?user={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "username",
-        "param_example": "username",
-        "param_validation": r"^@?[a-zA-Z][a-zA-Z0-9_]{4,31}$",
-        "extra_blacklist": ["expiry"],
-        "rate_limit_per_min": 80,
-        "category": "social",
-        "enabled": True,
-    },
-    "email": {
-        "name": "📧 Email Lookup",
-        "description": "Email address intelligence",
-        "url_template": f"{_BASE}/email?address={{param}}&key={{api_key}}",
-        "external_api_key": _KEY,
-        "param_name": "email",
-        "param_example": "test@example.com",
-        "param_validation": r"^[\w.%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}$",
+    "phone_number": {
+        "name": "Phone Number Info (v2)",
+        "description": "Alternate phone number details",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/Number?Number={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "number",
+        "param_example": "9876543210",
+        "param_validation": r"^\d{10}$",
         "extra_blacklist": [],
-        "rate_limit_per_min": 60,
-        "category": "social",
-        "enabled": True,
+        "rate_limit_per_min": 80,
+        "enabled": True
     },
-}
-
-# ── CATEGORY LABELS (for Telegram menus) ──────────────────────
-API_CATEGORIES = {
-    "telecom":  "📡 Telecom",
-    "identity": "🪪 Identity",
-    "vehicle":  "🚗 Vehicle",
-    "finance":  "💰 Finance",
-    "social":   "🌐 Social / Digital",
-}
-
-# ------------------------------------------------------------
-# 11. PLANS  — weekly (15cr/7d) & monthly (30cr/30d) per API
-# ------------------------------------------------------------
-DEFAULT_PLANS = {
-    api_key: {
-        "weekly":  {"credits": 15, "days": 7},
-        "monthly": {"credits": 30, "days": 30},
+    "vehicle3": {
+        "name": "Vehicle Backup",
+        "description": "Vehicle RC backup lookup",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/v3?Vehicle%20Backup={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "reg_no",
+        "param_example": "UP32AB1234",
+        "param_validation": r"^[A-Z]{2}\d{2}[A-Z]{2}\d{4}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "vi_photo": {
+        "name": "Vi SIM Info & Photo",
+        "description": "Vi SIM details with photo",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/photo?/vi={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "number",
+        "param_example": "1234567890",
+        "param_validation": r"^\d{10}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 20,
+        "enabled": True
+    },
+    "vi_sim": {
+        "name": "Vi SIM Info",
+        "description": "Vi SIM info without photo",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/v4?Vi%20photo={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "number",
+        "param_example": "1234567890",
+        "param_validation": r"^\d{10}$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
+    },
+    "drive": {
+        "name": "Google Drive Lookup",
+        "description": "Get info from Google Drive link/file ID",
+        "url_template": "https://anuapi.netlify.app/.netlify/functions/api/drive?drive={param}&key={api_key}",
+        "external_api_key": os.getenv("ANU_API_KEY", ""),
+        "param_name": "drive_link",
+        "param_example": "https://drive.google.com/file/d/XXXX/view",
+        "param_validation": r"^.+$",
+        "extra_blacklist": [],
+        "rate_limit_per_min": 30,
+        "enabled": True
     }
-    for api_key in API_ENDPOINTS
 }
+
+# ------------------------------------------------------------
+# 11. PLANS (Auto-generated for all APIs)
+# ------------------------------------------------------------
+DEFAULT_PLANS = {}
+for api in API_ENDPOINTS:
+    DEFAULT_PLANS[api] = {
+        "weekly": {"credits": 15, "days": 7},
+        "monthly": {"credits": 30, "days": 30}
+    }
 
 # ------------------------------------------------------------
 # 12. REFERRAL
@@ -398,11 +385,11 @@ PREMIUM_EXEMPT_FORCE_JOIN = os.getenv("PREMIUM_EXEMPT_FORCE_JOIN", "False").lowe
 # ------------------------------------------------------------
 # 14. CONTACTS
 # ------------------------------------------------------------
-OWNER_USERNAME  = os.getenv("OWNER_USERNAME",  "@Nullprotocol_x")
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "@Nullprotocol_x")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Nullprotocol_x")
 
 # ------------------------------------------------------------
-# 15. RATE LIMIT
+# 15. DEFAULT RATE LIMIT
 # ------------------------------------------------------------
 DEFAULT_RATE_LIMIT_PER_MIN = int(os.getenv("DEFAULT_RATE_LIMIT", "80"))
 
@@ -413,14 +400,10 @@ BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 BACKUP_CHAT_ID = int(os.getenv("BACKUP_CHAT_ID", str(OWNER_ID)))
 
 # ------------------------------------------------------------
-# 17. GOOGLE SHEETS  — env variable ONLY
+# 17. GOOGLE SHEETS CONFIGURATION
 # ------------------------------------------------------------
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")   # Must be set in environment
-if not GOOGLE_SHEET_ID:
-    import warnings
-    warnings.warn("⚠️  GOOGLE_SHEET_ID not set — Sheets logging will be disabled.")
-
-GSHEET_CREDS = os.getenv("GSHEET_CREDS", "")  # base64-encoded service account JSON
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1fn5yyUZmOAbX6bBafL3L4lrHxHLuaiBpaq4JoqxHOhE")
+GSHEET_CREDS = os.getenv("GSHEET_CREDS", "")   # base64 encoded service account JSON
 
 # ------------------------------------------------------------
 # 18. IP INTELLIGENCE
@@ -428,13 +411,25 @@ GSHEET_CREDS = os.getenv("GSHEET_CREDS", "")  # base64-encoded service account J
 IP_API_URL = os.getenv("IP_API_URL", "http://ip-api.com/json/{}")
 
 # ------------------------------------------------------------
-# 19. DEBUG
+# 19. CUSTOM ERROR RESPONSES (can be overridden per API via admin panel)
 # ------------------------------------------------------------
-DEBUG     = os.getenv("DEBUG", "False").lower() == "true"
+DEFAULT_ERROR_RESPONSES = {
+    "expired_key": "⚠️ Your API subscription has expired.\nPlease renew your API access to continue using the services.\n\nSupport & Renewal:\nhttps://t.me/+yLGfzldPjsc0NzU1",
+    "invalid_key": "❌ Invalid API key detected.\nPlease purchase a valid API key to access the services.\n\nPurchase Here:\nhttps://t.me/+yLGfzldPjsc0NzU1",
+    "no_subscription": "🔒 You don't have an active subscription for this API.\nPlease buy a plan from /buy.",
+    "rate_limit": "⏳ Too many requests. Please wait a moment and try again.",
+    "upstream_error": "⚙️ Service temporarily unavailable. Please try again in a few minutes.",
+    "invalid_input": "🚫 Invalid input format. Please check the example and try again."
+}
+
+# ------------------------------------------------------------
+# 20. DEBUG
+# ------------------------------------------------------------
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-print("✅ CONFIG LOADED — PostgreSQL + Google Sheets + IP Intelligence")
-print(f"🚀 Bot Mode : {BOT_MODE.upper()}")
-print(f"👑 Owner ID : {OWNER_ID}")
-print(f"📊 Sheet ID : {GOOGLE_SHEET_ID[:20]}..." if GOOGLE_SHEET_ID else "📊 Sheet   : DISABLED")
-print(f"🔌 APIs     : {len(API_ENDPOINTS)} endpoints across {len(API_CATEGORIES)} categories")
+print("✅ CONFIG LOADED - ALL APIs + REDIS + GOOGLE SHEETS + IP INTELLIGENCE")
+print(f"🚀 Bot Mode: {BOT_MODE.upper()}")
+print(f"👑 Owner ID: {OWNER_ID}")
+print(f"📊 Google Sheet ID: {GOOGLE_SHEET_ID[:20]}...")
+print(f"💾 Database: PostgreSQL + Redis {'(enabled)' if REDIS_URL else '(disabled)'}")
