@@ -1,4 +1,4 @@
-# main.py - ULTRA PROFESSIONAL VERSION (100% WORKING)
+# main.py - ULTRA PROFESSIONAL VERSION WITH REDIS INTEGRATION (100% WORKING)
 
 import json
 import asyncio
@@ -8,6 +8,7 @@ import re
 import aiohttp
 import logging
 import os
+import redis.asyncio as redis
 from datetime import datetime, timedelta, timezone
 from quart import Quart, request, jsonify
 from telegram import (
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 app = Quart(__name__)
 cache: dict = {}
 http_session: aiohttp.ClientSession = None
+redis_client = None
 
 # PTB application
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -61,7 +63,6 @@ def decode_error(error_text):
     if not error_text:
         return "⚠️ An error occurred. Please try again later."
     
-    # If it's a 502 from the upstream API, treat as data not found
     if "502" in error_text or "Upstream error: 502" in error_text:
         return "❌ Requested data currently available nahi hai."
     
@@ -162,11 +163,30 @@ def remove_branding(data, extra_blacklist=None):
     return data
 
 async def get_cached(key):
+    """Get cached data with Redis fallback"""
+    # Try Redis first
+    if USE_REDIS and redis_client:
+        try:
+            val = await redis_client.get(key)
+            if val is not None:
+                return val
+        except Exception as e:
+            logger.warning(f"Redis get error: {e}")
+    # Fallback to memory cache
     if key in cache and time.time() - cache[key][0] < CACHE_TTL:
         return cache[key][1]
     return None
 
 async def set_cached(key, data):
+    """Set cached data with Redis fallback"""
+    # Set in Redis
+    if USE_REDIS and redis_client:
+        try:
+            await redis_client.setex(key, CACHE_TTL, data)
+            return
+        except Exception as e:
+            logger.warning(f"Redis set error: {e}")
+    # Set in memory cache
     cache[key] = (time.time(), data)
 
 # ====================== QUART ROUTES ======================
@@ -214,20 +234,53 @@ async def proxy_api(api_type):
     if not await is_admin(uid) and not await has_active_subscription(uid, api_type):
         return jsonify({"error": "No active subscription for this API"}), 403
 
-    # Rate limiting
+    # ============ UPDATED RATE LIMITING (Redis support) ============
     rate_key = f"rate_{key}"
     now = time.time()
-    if rate_key in cache:
-        count, start = cache[rate_key]
-        if now - start > 60:
-            count = 1
-            cache[rate_key] = (count, now)
-        else:
-            if count >= rate_limit:
+    
+    if USE_REDIS and redis_client:
+        # Redis-based rate limiting (distributed)
+        try:
+            # Get current count
+            current_count = await redis_client.get(rate_key)
+            if current_count is None:
+                current_count = 0
+            else:
+                current_count = int(current_count)
+            
+            if current_count >= rate_limit:
                 return jsonify({"error": "Rate limit exceeded. Please wait and try again."}), 429
-            cache[rate_key] = (count + 1, start)
+            
+            # Increment and set expiry
+            await redis_client.incr(rate_key)
+            await redis_client.expire(rate_key, 60)
+        except Exception as e:
+            logger.warning(f"Redis rate limit error: {e}")
+            # Fallback to memory
+            if rate_key in cache:
+                count, start = cache[rate_key]
+                if now - start > 60:
+                    count = 1
+                    cache[rate_key] = (count, now)
+                else:
+                    if count >= rate_limit:
+                        return jsonify({"error": "Rate limit exceeded. Please wait and try again."}), 429
+                    cache[rate_key] = (count + 1, start)
+            else:
+                cache[rate_key] = (1, now)
     else:
-        cache[rate_key] = (1, now)
+        # Memory-based rate limiting
+        if rate_key in cache:
+            count, start = cache[rate_key]
+            if now - start > 60:
+                count = 1
+                cache[rate_key] = (count, now)
+            else:
+                if count >= rate_limit:
+                    return jsonify({"error": "Rate limit exceeded. Please wait and try again."}), 429
+                cache[rate_key] = (count + 1, start)
+        else:
+            cache[rate_key] = (1, now)
 
     # Request quota check
     used, remaining, total = await get_request_stats(key)
@@ -290,7 +343,6 @@ async def proxy_api(api_type):
                         ip_info = await ip_resp.json()
             except Exception as e:
                 logger.warning(f"IP lookup failed: {e}")
-
             await insert_api_log(
                 api_type=api_type,
                 api_key=key,
@@ -1190,10 +1242,8 @@ async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_T
     for uid in users:
         try:
             if msg.text and not msg.photo and not msg.video and not msg.document and not msg.audio:
-                # Text message
                 await application.bot.send_message(uid, msg.text, parse_mode='HTML')
             elif msg.photo:
-                # Photo with optional caption
                 await application.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
             elif msg.video:
                 await application.bot.send_video(uid, msg.video.file_id, caption=msg.caption or "")
@@ -1202,7 +1252,6 @@ async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_T
             elif msg.audio:
                 await application.bot.send_audio(uid, msg.audio.file_id, caption=msg.caption or "")
             elif msg.media_group_id:
-                # Handle media group - send first media
                 if msg.photo:
                     await application.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
                 elif msg.video:
@@ -1494,11 +1543,23 @@ async def daily_backup():
 
 # ====================== STARTUP / SHUTDOWN ======================
 async def on_startup():
-    global http_session
+    global http_session, redis_client
     await init_db()
     global pool
     pool = database.pool
     http_session = aiohttp.ClientSession()
+    
+    # Initialize Redis if enabled
+    if USE_REDIS and REDIS_URL:
+        try:
+            redis_client = await redis.from_url(REDIS_URL, decode_responses=True)
+            await redis_client.ping()
+            logger.info("✅ Redis connected successfully")
+        except Exception as e:
+            logger.error(f"❌ Redis connection failed: {e}")
+            redis_client = None
+            logger.warning("⚠️ Redis unavailable - falling back to in-memory cache")
+    
     await application.initialize()
     await application.bot.set_my_commands([
         BotCommand("start", "Start bot"),
@@ -1521,6 +1582,9 @@ async def on_startup():
 async def on_shutdown():
     if http_session:
         await http_session.close()
+    if redis_client:
+        await redis_client.close()
+        logger.info("Redis connection closed")
     await application.stop()
     await application.shutdown()
     await close_db()
