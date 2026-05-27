@@ -1,4 +1,4 @@
-# requirements.txt - UPGRADED PRODUCTION DEPENDENCIES
+# requirements.txt - FINAL PRODUCTION DEPENDENCIES (ALL APIs + REDIS + GOOGLE SHEETS)
 
 Quart==0.19.6
 hypercorn==0.17.3
@@ -9,3 +9,4 @@ python-dotenv==1.0.0
 tenacity==8.3.0
 gspread==6.1.4
 google-auth==2.38.0
+redis==5.0.1
