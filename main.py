@@ -1,4 +1,4 @@
-# main.py - FINAL PRODUCTION VERSION (ALL APIs + REDIS + SHEETS + IP INTELLIGENCE + SMART BROADCAST)
+# main.py - FINAL PRODUCTION VERSION (ALL APIs + REDIS + POSTGRESQL LOGGING + SMART BROADCAST)
 
 import json, asyncio, secrets, time, re, aiohttp, logging, os
 from datetime import datetime, timedelta, timezone
@@ -14,7 +14,6 @@ from telegram.ext import (
 from config import *
 from database import *
 import database
-from sheets import init_sheets, log_api_call
 import redis_client
 
 # Logging setup
@@ -95,18 +94,11 @@ async def proxy_api(api_type):
 
     valid, uid, rate_limit = await validate_api_key(key)
     if not valid:
-        # Check if expired or invalid, but validate_api_key returns (valid, uid, rate_limit)
-        # We'll differentiate: if key exists but expired, show expired; else invalid
-        # For simplicity, we'll check the key existence separately.
-        # Actually, validate_api_key already returns False for expired/inactive. We'll use custom message.
-        # We'll do a quick check if the key exists in DB to decide expired vs invalid.
-        # But we don't have a direct function; we'll just use "invalid_key" generic.
-        # We can enhance later. For now, we'll check if key exists at all (by looking up key in DB)
-        # But to keep it simple, we use the default invalid key message, and we can distinguish by checking if key is expired:
+        # Distinguish between expired/inactive vs truly invalid
         async with pool.acquire() as conn:
             row = await conn.fetchrow("SELECT expires_at, is_active FROM api_keys WHERE key=$1", key)
         if row and not row['is_active']:
-            msg_type = 'expired_key'  # actually inactive; we treat as expired
+            msg_type = 'expired_key'
         elif row and row['expires_at'] < datetime.now(timezone.utc):
             msg_type = 'expired_key'
         else:
@@ -199,7 +191,7 @@ async def proxy_api(api_type):
 
     cleaned = remove_branding(data, cfg.get('extra_blacklist', []))
 
-    # IP lookup & sheet logging
+    # IP lookup & PostgreSQL logging
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if client_ip and ',' in client_ip:
         client_ip = client_ip.split(',')[0].strip()
@@ -215,7 +207,7 @@ async def proxy_api(api_type):
                             ip_info = await ip_resp.json()
                 except:
                     pass
-            await log_api_call(api_type, key, normalized_value, client_ip, ip_info, cleaned)
+            await log_api_call_to_db(api_type, key, normalized_value, client_ip, ip_info, cleaned)
         except Exception as e:
             logger.error(f"Background log error: {e}")
 
@@ -273,6 +265,7 @@ def admin_panel_kb(broadcast_mode=False):
          InlineKeyboardButton("🎨 Custom Key", callback_data="admin_customkey")],
         [InlineKeyboardButton("📝 Edit Responses", callback_data="admin_edit_responses"),
          InlineKeyboardButton("⚡ Toggle API", callback_data="admin_toggle_api")],
+        [InlineKeyboardButton("📥 Download Logs", callback_data="admin_download_logs")],
         [InlineKeyboardButton("❌ Close", callback_data="close_panel")]
     ])
 
@@ -399,7 +392,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Optimized force join check
     if not is_adm and data not in ["check_join", "close_panel"]:
-        # Check DB flag first
         async with pool.acquire() as conn:
             db_joined = await conn.fetchval("SELECT joined_force_channels FROM users WHERE user_id=$1", uid)
         if not db_joined:
@@ -434,7 +426,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("userlist_page_"): await paginated_user_list(update, context)
     elif data.startswith("premiumlist_page_"): await paginated_premium_list(update, context)
     elif data.startswith("adminlist_page_"): await paginated_admin_list(update, context)
-    elif data.startswith("keys_page_"): await paginated_keys_list(update, context)
+    # keys_page_ pattern removed
     elif data.startswith("toggle_ban_"): await toggle_ban(update, context)
     elif data.startswith("add_credits_"): await add_credits_prompt(update, context)
     elif data.startswith("remove_premium_"): await remove_premium_handler(update, context)
@@ -444,7 +436,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("keytoggle_"): await toggle_key_status(update, context)
     elif data.startswith("delete_key_"): await confirm_delete_key(update, context)
     elif data.startswith("confirm_delete_key_"): await execute_delete_key(update, context)
-    elif data.startswith("bcast_"): pass  # old broadcast type removed
     elif data == "check_join": await check_join_cb(update, context)
     elif data == "admin_customkey": await custom_key_admin(update, context)
     elif data.startswith("custkey_"): await custom_key_type_selected(update, context)
@@ -669,9 +660,25 @@ async def admin_menu_handler(update, context):
         if api in API_ENDPOINTS:
             API_ENDPOINTS[api]['enabled'] = not API_ENDPOINTS[api].get('enabled', True)
             await q.answer(f"API {api} {'enabled' if API_ENDPOINTS[api]['enabled'] else 'disabled'}.", show_alert=True)
-            # Refresh panel
             bmode = context.user_data.get('broadcast_mode', False)
             await q.edit_message_text("🛡️ Admin Panel", reply_markup=admin_panel_kb(bmode))
+    elif data == "admin_download_logs":
+        try:
+            logs = await get_all_logs_json()
+            if not logs:
+                await q.answer("No logs yet!", show_alert=True)
+                return
+            json_str = json.dumps(logs, indent=2, ensure_ascii=False)
+            file_bytes = json_str.encode('utf-8')
+            await q.edit_message_text("📁 Sending logs as JSON file...")
+            await application.bot.send_document(
+                chat_id=q.message.chat_id,
+                document=file_bytes,
+                filename=f"api_logs_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json",
+                caption=f"Total logs: {len(logs)}"
+            )
+        except Exception as e:
+            await q.answer(f"Error: {e}", show_alert=True)
     else:
         await q.answer("Coming soon.", show_alert=True)
 
@@ -814,8 +821,6 @@ async def toggle_key_status(update, context):
         active = await conn.fetchval("SELECT is_active FROM api_keys WHERE key=$1", key)
     if active: await deactivate_api_key(key); await q.answer("Key deactivated.", show_alert=True)
     else: await activate_api_key(key); await q.answer("Key activated.", show_alert=True)
-    # Show updated keys list? We'll just refresh via admin menu later; for simplicity, we'll call show_full_keys? Not necessary.
-    await q.answer("Done.", show_alert=True)
 
 # ====================== DELETE KEY ======================
 async def confirm_delete_key(update, context):
@@ -918,7 +923,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # If admin and broadcast mode is ON, smart_broadcast_handler already handled it.
-    # So here we only proceed if not broadcast_mode.
     if not await is_admin(uid):
         return
 
@@ -1043,9 +1047,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Session expired.")
         context.user_data.pop('edit_api', None); context.user_data.pop('edit_msg_type', None)
 
-# ====================== MEDIA BROADCAST (OLD, REPLACED) ======================
-# Not needed, handled by smart_broadcast_handler
-
 # ====================== BACKGROUND TASKS ======================
 async def self_ping():
     await asyncio.sleep(10)
@@ -1083,7 +1084,6 @@ async def on_startup():
     global http_session
     await init_db()
     global pool; pool = database.pool
-    init_sheets()
     await redis_client.init_redis()
     http_session = aiohttp.ClientSession()
     await application.initialize()
@@ -1126,7 +1126,7 @@ application.add_handler(CallbackQueryHandler(check_join_cb, pattern="^check_join
 application.add_handler(CallbackQueryHandler(paginated_user_list, pattern="^userlist_page_"))
 application.add_handler(CallbackQueryHandler(paginated_premium_list, pattern="^premiumlist_page_"))
 application.add_handler(CallbackQueryHandler(paginated_admin_list, pattern="^adminlist_page_"))
-application.add_handler(CallbackQueryHandler(paginated_keys_list, pattern="^keys_page_"))
+# keys_page_ handler removed (full key viewer used instead)
 application.add_handler(CallbackQueryHandler(toggle_ban, pattern="^toggle_ban_"))
 application.add_handler(CallbackQueryHandler(add_credits_prompt, pattern="^add_credits_"))
 application.add_handler(CallbackQueryHandler(remove_premium_handler, pattern="^remove_premium_"))
@@ -1140,7 +1140,7 @@ application.add_handler(CallbackQueryHandler(custom_key_type_selected, pattern="
 
 # Smart broadcast handler (high priority) – catches all messages when broadcast_mode ON
 application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, smart_broadcast_handler), group=0)
-# Text handler for admin states (only works when broadcast_mode OFF, because smart_broadcast_handler will block it)
+# Text handler for admin states (only works when broadcast_mode OFF)
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text), group=1)
 
 if __name__ == '__main__':
