@@ -17,7 +17,7 @@ gc = None
 sheet = None
 worksheet_cache = {}
 
-# Tab names for all possible API types (matching keys in API_ENDPOINTS)
+# Tab names for every API type (matching keys in API_ENDPOINTS)
 TAB_NAMES = {
     "num": "📞 Phone Info",
     "tg": "💬 Telegram Info",
@@ -38,6 +38,7 @@ TAB_NAMES = {
     "gas": "🔥 Gas Connection",
     "number_info_backup": "📞 Phone Backup",
     "vehicle_backup": "🚛 Vehicle Backup",
+    "vi_sim_photo": "📷 Vi SIM & Photo",
     "vi_sim_info": "📶 Vi SIM Info",
     "drive": "📁 Drive Lookup"
 }
@@ -54,10 +55,10 @@ HEADERS = [
     "Response JSON"
 ]
 
-# Column widths (approximate pixel count)
+# Column widths (pixels)
 COL_WIDTHS = [160, 200, 150, 130, 100, 120, 200, 400]
 
-# Colors (Google Sheets hex format without #)
+# Colors
 DARK_BLUE = {"red": 0.102, "green": 0.459, "blue": 0.91}   # #1a73e8
 WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
 LIGHT_BLUE = {"red": 0.91, "green": 0.94, "blue": 0.98}    # #e8f0fe
@@ -85,7 +86,7 @@ def init_sheets():
         sheet = gc.open_by_key(GOOGLE_SHEET_ID)
         logger.info(f"✅ Connected to Google Sheet: {sheet.title}")
 
-        # Ensure a tab exists for every API type defined in config
+        # Ensure a tab exists for every API type in the config
         for api_type in API_ENDPOINTS:
             tab_name = TAB_NAMES.get(api_type, f"📊 {api_type.upper()}")
             try:
@@ -110,14 +111,11 @@ def _apply_formatting(ws, tab_name):
     Apply attractive formatting to a NEW worksheet tab:
     - Dark blue header with white bold text
     - Frozen first row
-    - Column auto-resize
+    - Column widths
     - Alternating row colors via conditional formatting
-    Only called when the tab is first created.
     """
-    num_cols = len(HEADERS)
-
     try:
-        # 1. Set headers (only once)
+        # 1. Set headers
         ws.update(values=[HEADERS], range_name="A1")
 
         # 2. Format header row
@@ -136,7 +134,7 @@ def _apply_formatting(ws, tab_name):
         # 3. Freeze first row
         ws.freeze(rows=1)
 
-        # 4. Set column widths via batch update (one time)
+        # 4. Set column widths via batch update
         requests = []
         for i, width in enumerate(COL_WIDTHS):
             requests.append({
@@ -158,10 +156,10 @@ def _apply_formatting(ws, tab_name):
             except Exception as e:
                 logger.warning(f"Column resize warning: {e}")
 
-        # 5. Apply alternating row colors (conditional formatting)
+        # 5. Alternating row colors
         try:
             ws.add_conditional_formatting(
-                "A2:H1000",   # apply to first 1000 rows (will expand automatically)
+                "A2:H1000",
                 {
                     "type": "CUSTOM_FORMULA",
                     "values": [{"userEnteredValue": "=ISEVEN(ROW())"}],
@@ -182,8 +180,7 @@ def _apply_formatting(ws, tab_name):
 def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, response_data):
     """
     Synchronously log an API call to Google Sheet.
-    This function is designed to be run in a thread (via asyncio.to_thread)
-    to avoid blocking the async event loop.
+    This is designed to be run in a thread to avoid blocking the async event loop.
     """
     if not gc or not sheet:
         return
@@ -191,8 +188,7 @@ def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, respon
     try:
         ws = worksheet_cache.get(api_type)
         if not ws:
-            logger.warning(f"No worksheet found for {api_type}, attempting to create one...")
-            # Fallback: create tab on the fly (shouldn't happen if init was successful)
+            # Fallback: create tab if missing (should not happen normally)
             tab_name = TAB_NAMES.get(api_type, f"📊 {api_type.upper()}")
             try:
                 ws = sheet.worksheet(tab_name)
@@ -214,12 +210,11 @@ def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, respon
         # Append row
         ws.append_row(row, value_input_option="USER_ENTERED")
 
-        # Auto-clean: keep max 5000 rows (delete oldest 100 if exceeded)
-        # Use row_count instead of get_all_values for speed
+        # Auto-clean: keep max 5000 rows
         try:
             total_rows = ws.row_count
             if total_rows > 5000:
-                ws.delete_rows(2, 100)  # Delete rows 2-101 (header untouched)
+                ws.delete_rows(2, 100)  # delete rows 2-101, header stays
         except Exception:
             pass
 
@@ -230,7 +225,7 @@ def log_api_call_sync(api_type, api_key, input_value, client_ip, ip_info, respon
 async def log_api_call(api_type, api_key, input_value, client_ip, ip_info, response_data):
     """
     Async wrapper that runs the sync log function in a thread pool.
-    This is called from the Quart route as a background task.
+    Called as a background task from the API route.
     """
     try:
         await asyncio.to_thread(
