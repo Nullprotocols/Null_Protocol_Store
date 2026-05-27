@@ -1,7 +1,4 @@
-# requirements.txt - FINAL PRODUCTION DEPENDENCIES (NO GOOGLE SHEETS)
-
 Quart==0.19.6
-flask>=3.0.0,<3.1.0
 hypercorn==0.17.3
 aiohttp==3.9.5
 python-telegram-bot==21.10
