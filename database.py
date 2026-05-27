@@ -1,26 +1,28 @@
-# database.py - FINAL PRODUCTION VERSION (DYNAMIC PLANS, KEY STATUS, INDEXES)
+# database.py - FINAL PRODUCTION VERSION (DYNAMIC PLANS, KEY STATUS, INDEXES, ANY SUBSCRIPTION CHECK)
 
 import asyncpg
 import secrets
 from datetime import datetime, timedelta, timezone
 from config import DATABASE_URL, DEFAULT_PLANS, API_ENDPOINTS
 
-# Global connection pool
+# Global connection pool – optimized for speed
 pool = None
 
 
 async def init_db():
-    """Initialize database pool, create tables, indexes, and dynamic plans."""
+    """Initialize database pool (5-30 connections) and create all tables + indexes + dynamic plans."""
     global pool
     pool = await asyncpg.create_pool(
         DATABASE_URL,
         min_size=5,
         max_size=30,
-        statement_cache_size=100  # prepared statement caching
+        statement_cache_size=100  # prepared statements cache
     )
 
     async with pool.acquire() as conn:
-        # ---------------- USERS TABLE ----------------
+        # ------------------------------------------------------------
+        # 1. USERS TABLE
+        # ------------------------------------------------------------
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -38,7 +40,9 @@ async def init_db():
             )
         """)
 
-        # ---------------- API KEYS TABLE ----------------
+        # ------------------------------------------------------------
+        # 2. API KEYS TABLE
+        # ------------------------------------------------------------
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS api_keys (
                 key TEXT PRIMARY KEY,
@@ -53,7 +57,9 @@ async def init_db():
             )
         """)
 
-        # ---------------- PLANS TABLE ----------------
+        # ------------------------------------------------------------
+        # 3. API PLANS TABLE (pricing)
+        # ------------------------------------------------------------
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS api_plans (
                 plan_id SERIAL PRIMARY KEY,
@@ -65,7 +71,9 @@ async def init_db():
             )
         """)
 
-        # ---------------- SUBSCRIPTIONS TABLE ----------------
+        # ------------------------------------------------------------
+        # 4. USER SUBSCRIPTIONS TABLE
+        # ------------------------------------------------------------
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_subscriptions (
                 sub_id SERIAL PRIMARY KEY,
@@ -80,7 +88,9 @@ async def init_db():
             )
         """)
 
-        # ---------------- REDEEM CODES TABLE ----------------
+        # ------------------------------------------------------------
+        # 5. REDEEM CODES TABLE
+        # ------------------------------------------------------------
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS redeem_codes (
                 code TEXT PRIMARY KEY,
@@ -94,7 +104,9 @@ async def init_db():
             )
         """)
 
-        # ---------------- CODE REDEMPTIONS TABLE ----------------
+        # ------------------------------------------------------------
+        # 6. CODE REDEMPTIONS TABLE
+        # ------------------------------------------------------------
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS code_redemptions (
                 redemption_id SERIAL PRIMARY KEY,
@@ -105,24 +117,18 @@ async def init_db():
             )
         """)
 
-        # ---------------- INDEXES (performance) ----------------
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_users_premium ON users(is_premium)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_users_owner ON users(is_owner)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_keys_created_by ON api_keys(created_by)
-        """)
+        # ------------------------------------------------------------
+        # INDEXES (performance boosters)
+        # ------------------------------------------------------------
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_premium ON users(is_premium)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_owner ON users(is_owner)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_created_by ON api_keys(created_by)")
 
-        # ---------------- INSERT DEFAULT PLANS (existing) ----------------
+        # ------------------------------------------------------------
+        # INSERT DEFAULT PLANS (existing hardcoded ones)
+        # ------------------------------------------------------------
         for api_type, plans in DEFAULT_PLANS.items():
             for plan_name, details in plans.items():
                 await conn.execute("""
@@ -133,14 +139,17 @@ async def init_db():
                         duration_days = EXCLUDED.duration_days
                 """, api_type, plan_name, details['credits'], details['days'])
 
-        # ---------------- DYNAMIC PLANS (for all APIs in config) ----------------
-        # Every API gets weekly & monthly plans with price 0 (admin sets later)
+        # ------------------------------------------------------------
+        # DYNAMIC PLANS for every API defined in config (weekly/monthly)
+        # ------------------------------------------------------------
         for api_type in API_ENDPOINTS:
+            # Weekly plan
             await conn.execute("""
                 INSERT INTO api_plans (api_type, plan_name, price_credits, duration_days)
                 VALUES ($1, 'weekly', 0, 7)
                 ON CONFLICT (api_type, plan_name) DO NOTHING
             """, api_type)
+            # Monthly plan
             await conn.execute("""
                 INSERT INTO api_plans (api_type, plan_name, price_credits, duration_days)
                 VALUES ($1, 'monthly', 0, 30)
@@ -272,7 +281,7 @@ async def create_api_key(key, created_by, expires_days=30, rate_limit=80, total_
 
 
 async def validate_api_key(key):
-    """Return (valid, created_by, rate_limit). Checks expiry and active status."""
+    """Return (valid, created_by, rate_limit)."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT created_by, expires_at, rate_limit_per_min, is_active FROM api_keys WHERE key=$1", key
@@ -374,7 +383,7 @@ async def create_subscription(user_id, api_type, plan_name):
 
 
 async def has_active_subscription(user_id, api_type):
-    """Check if user has an active (non-expired) subscription for an API type."""
+    """Check if user has an active (non-expired) subscription for a specific API."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT end_date FROM user_subscriptions WHERE user_id=$1 AND api_type=$2 AND is_active=TRUE",
@@ -388,6 +397,16 @@ async def has_active_subscription(user_id, api_type):
                 user_id, api_type
             )
         return False
+
+
+async def has_any_subscription(user_id):
+    """Return True if user has at least one active subscription for any API."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchval(
+            "SELECT 1 FROM user_subscriptions WHERE user_id=$1 AND is_active=TRUE AND end_date > NOW() LIMIT 1",
+            user_id
+        )
+        return row is not None
 
 
 # ====================== REDEEM CODE FUNCTIONS ======================
