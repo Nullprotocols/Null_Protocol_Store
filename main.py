@@ -1,4 +1,5 @@
-# main.py - FINAL PRODUCTION VERSION (ALL FEATURES, ULTRA-FAST, CRASH-PROOF, FRIENDLY)
+# main.py - FINAL PRODUCTION VERSION (GOOGLE SHEETS + IP INTELLIGENCE)
+# All original features + attractive sheet logging + IP tracking
 
 import json, asyncio, secrets, time, re, aiohttp, logging, os
 from datetime import datetime, timedelta, timezone
@@ -13,30 +14,10 @@ from telegram.ext import (
 )
 from config import *
 from database import *
-import database                    # needed for pool reference
-from sheets import init_sheets, log_api_call
+import database                    # <-- Fix for pool reference
+from sheets import init_sheets, log_api_call   # <-- Google Sheets integration
 
-# Optional ultra-fast modules
-try:
-    import uvloop
-    uvloop.install()
-except ImportError:
-    pass
-
-try:
-    import redis.asyncio as aioredis
-    REDIS_ENABLED = True
-except ImportError:
-    REDIS_ENABLED = False
-
-from tenacity import (
-    retry, stop_after_attempt, wait_exponential,
-    retry_if_exception_type
-)
-
-# ------------------------------------------------------------------
 # Logging
-# ------------------------------------------------------------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=getattr(logging, LOG_LEVEL)
@@ -45,16 +26,13 @@ logger = logging.getLogger(__name__)
 
 # Quart app
 app = Quart(__name__)
-cache: dict = {}                 # fallback in-memory cache
+cache: dict = {}
 http_session: aiohttp.ClientSession = None
-redis_client = None
 
 # PTB application
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
+# ====================== HELPERS ======================
 def remove_branding(data, extra_blacklist=None):
     if extra_blacklist is None: extra_blacklist = []
     blacklist = set([t.lower() for t in GLOBAL_BLACKLIST] + [t.lower() for t in extra_blacklist])
@@ -70,60 +48,15 @@ def remove_branding(data, extra_blacklist=None):
         return cleaned
     return data
 
-def friendly_error(upstream_data):
-    """Convert upstream errors to simple human language."""
-    if not isinstance(upstream_data, dict):
-        return "Something went wrong."
-    err = upstream_data.get("error", "")
-    msg = upstream_data.get("message", "")
-    if "502" in err or "Bad Gateway" in err:
-        return "Service temporarily unavailable. Please try again later."
-    if "404" in err:
-        return "Requested data not found."
-    if "timeout" in err.lower():
-        return "Upstream server took too long. Try again shortly."
-    return msg or err or "Unknown error."
-
 async def get_cached(key):
-    if REDIS_ENABLED and redis_client:
-        data = await redis_client.get(key)
-        if data: return data
-        return None
     if key in cache and time.time() - cache[key][0] < CACHE_TTL:
         return cache[key][1]
     return None
 
-async def set_cached(key, data, ttl=None):
-    if REDIS_ENABLED and redis_client:
-        await redis_client.setex(key, ttl or CACHE_TTL, data)
-    else:
-        cache[key] = (time.time(), data)
+async def set_cached(key, data):
+    cache[key] = (time.time(), data)
 
-# ------------------------------------------------------------------
-# Retry logic for upstream API calls (tenacity)
-# ------------------------------------------------------------------
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4),
-    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
-    reraise=True
-)
-async def fetch_upstream(session, url):
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-        resp.raise_for_status()
-        return await resp.json()
-
-# ------------------------------------------------------------------
-# Gzip compression middleware (for faster responses)
-# ------------------------------------------------------------------
-@app.after_request
-async def add_gzip(response):
-    response.headers['Content-Encoding'] = 'gzip'
-    return response
-
-# ------------------------------------------------------------------
-# Quart Routes
-# ------------------------------------------------------------------
+# ====================== QUART ROUTES ======================
 @app.route('/health')
 async def health():
     return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
@@ -133,90 +66,62 @@ async def proxy_api(api_type):
     if api_type not in API_ENDPOINTS:
         return jsonify({"error": "Invalid API type"}), 400
     cfg = API_ENDPOINTS[api_type]
-    if not cfg.get("enabled", True):
-        return jsonify({"error": "This API is currently disabled."}), 403
-
-    # ---- API Key validation ----
     key = request.args.get('key')
     if not key:
         return jsonify({"error": "Missing 'key' parameter"}), 400
 
-    exists, is_active, is_expired = await get_key_status(key)
-    if not exists:
-        msg = cfg.get("invalid_message", "Invalid API key. Buy a valid key: https://t.me/+yLGfzldPjsc0NzU1")
-        return jsonify({"error": "invalid_key", "message": msg}), 401
-    if not is_active or is_expired:
-        msg = cfg.get("expired_message", "Your API key has expired. Renew: https://t.me/+yLGfzldPjsc0NzU1")
-        return jsonify({"error": "expired_key", "message": msg}), 401
+    valid, uid, rate_limit = await validate_api_key(key)
+    if not valid:
+        return jsonify({"error": "Invalid or expired API key"}), 403
 
-    owner_id = await get_key_owner(key)
-    if not await is_admin(owner_id):
-        if not await has_active_subscription(owner_id, api_type):
-            return jsonify({"error": "No active subscription for this API."}), 403
+    if not await is_admin(uid) and not await has_active_subscription(uid, api_type):
+        return jsonify({"error": "No active subscription"}), 403
 
-    # ---- Rate limiting ----
-    rate_limit = cfg.get("rate_limit_per_min", DEFAULT_RATE_LIMIT_PER_MIN)
-    if REDIS_ENABLED and redis_client:
-        rate_key = f"ratelimit:{key}"
-        current = await redis_client.incr(rate_key)
-        if current == 1:
-            await redis_client.expire(rate_key, 60)
-        if current > rate_limit:
-            return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
-    else:
-        rate_key = f"rate_{key}"
-        now = time.time()
-        if rate_key in cache:
-            count, start = cache[rate_key]
-            if now - start > 60:
-                count = 1
-                cache[rate_key] = (count, now)
-            else:
-                if count >= rate_limit:
-                    return jsonify({"error": "Rate limit exceeded."}), 429
-                cache[rate_key] = (count + 1, start)
+    # Rate limiting
+    rate_key = f"rate_{key}"
+    now = time.time()
+    if rate_key in cache:
+        count, start = cache[rate_key]
+        if now - start > 60:
+            count = 1
+            cache[rate_key] = (count, now)
         else:
-            cache[rate_key] = (1, now)
+            if count >= rate_limit:
+                return jsonify({"error": "Rate limit exceeded"}), 429
+            cache[rate_key] = (count + 1, start)
+    else:
+        cache[rate_key] = (1, now)
 
-    # ---- Request quota ----
+    # Request quota check
     used, remaining, total = await get_request_stats(key)
     if total is not None and used is not None and used >= total:
-        return jsonify({"error": "Request quota exhausted. Contact admin."}), 429
+        return jsonify({"error": "Request quota exhausted"}), 429
 
-    # ---- Input normalization ----
     param_name = cfg['param_name']
-    raw_value = request.args.get(param_name)
-    if not raw_value:
+    param_value = request.args.get(param_name)
+    if not param_value:
         return jsonify({"error": f"Missing '{param_name}'"}), 400
+    if 'param_validation' in cfg and not re.match(cfg['param_validation'], param_value):
+        return jsonify({"error": f"Invalid {param_name}"}), 400
 
-    clean_value = raw_value
-    if 'preprocess' in cfg:
-        clean_value = cfg['preprocess'](raw_value)
-    if 'param_validation' in cfg and not re.match(cfg['param_validation'], clean_value):
-        return jsonify({"error": f"Invalid {param_name}. Example: {cfg.get('param_example', 'N/A')}"}), 400
-
-    # ---- Cache check ----
-    cache_key = f"api_{api_type}_{clean_value}"
+    cache_key = f"api_{api_type}_{param_value}"
     cached = await get_cached(cache_key)
     if cached:
         await increment_request_count(key)
         return app.response_class(response=cached, status=200, mimetype='application/json')
 
-    # ---- Upstream API call with retry ----
-    url = cfg['url_template'].format(api_key=cfg['external_api_key'], param=clean_value)
+    url = cfg['url_template'].format(api_key=cfg['external_api_key'], param=param_value)
     try:
-        data = await fetch_upstream(http_session, url)
+        async with http_session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status != 200:
+                return jsonify({"error": f"Upstream API returned {resp.status}"}), 502
+            data = await resp.json()
     except Exception as e:
-        return jsonify({"error": "network_error", "message": str(e)}), 502
-
-    # Friendly error from upstream
-    if isinstance(data, dict) and "error" in data:
-        friendly_msg = friendly_error(data)
-        return jsonify({"error": "data_unavailable", "message": friendly_msg}), 200
+        return jsonify({"error": str(e)}), 502
 
     cleaned = remove_branding(data, cfg.get('extra_blacklist', []))
 
-    # ---- IP logging (background) ----
+    # ============ IP LOOKUP & SHEET LOGGING ============
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if client_ip and ',' in client_ip:
         client_ip = client_ip.split(',')[0].strip()
@@ -224,20 +129,29 @@ async def proxy_api(api_type):
     async def background_log():
         try:
             ip_info = {"ip": client_ip}
+            # IP lookup using ip-api.com
             try:
                 ip_url = IP_API_URL.format(client_ip) if IP_API_URL else f"http://ip-api.com/json/{client_ip}"
                 async with http_session.get(ip_url, timeout=aiohttp.ClientTimeout(total=5)) as ip_resp:
                     if ip_resp.status == 200:
                         ip_info = await ip_resp.json()
-            except: pass
+            except Exception as e:
+                logger.warning(f"IP lookup failed: {e}")
+
+            # Log to Google Sheets (clean data without branding)
             await log_api_call(
-                api_type=api_type, api_key=key, input_value=clean_value,
-                client_ip=client_ip, ip_info=ip_info, response_data=cleaned
+                api_type=api_type,
+                api_key=key,
+                input_value=param_value,
+                client_ip=client_ip,
+                ip_info=ip_info,
+                response_data=cleaned
             )
         except Exception as e:
             logger.error(f"Background log error: {e}")
 
     asyncio.create_task(background_log())
+    # ============ END IP LOOKUP & SHEET LOGGING ============
 
     cleaned['branding'] = BRANDING
     pretty = json.dumps(cleaned, indent=2, ensure_ascii=False)
@@ -258,9 +172,7 @@ async def webhook():
         logger.error(f"Webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ------------------------------------------------------------------
-# Keyboards
-# ------------------------------------------------------------------
+# ====================== KEYBOARDS ======================
 def main_menu(is_admin_flag, is_prem):
     btns = [
         [InlineKeyboardButton("🔑 Generate Key", callback_data="menu_genkey"),
@@ -295,9 +207,7 @@ def admin_panel_kb():
 
 back_btn = lambda data: InlineKeyboardButton("🔙 Back", callback_data=data)
 
-# ------------------------------------------------------------------
-# Force Join (with safe exception handling)
-# ------------------------------------------------------------------
+# ====================== FORCE JOIN ======================
 async def check_force_join(user_id):
     if await is_admin(user_id): return True, []
     if PREMIUM_EXEMPT_FORCE_JOIN and await is_premium(user_id): return True, []
@@ -306,9 +216,7 @@ async def check_force_join(user_id):
         try:
             mem = await application.bot.get_chat_member(chat_id=ch['id'], user_id=user_id)
             if mem.status in ['left', 'kicked']: missing.append(ch)
-        except Exception as e:
-            logger.warning(f"Force join check failed for {ch['id']}: {e}")
-            missing.append(ch)   # treat as not joined on any error
+        except: missing.append(ch)
     return len(missing) == 0, missing
 
 async def send_force_join(chat_id, missing):
@@ -317,9 +225,7 @@ async def send_force_join(chat_id, missing):
     kb.append([InlineKeyboardButton("✅ I've Joined", callback_data="check_join")])
     await application.bot.send_message(chat_id, text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
-# ------------------------------------------------------------------
-# Logging to Telegram channel
-# ------------------------------------------------------------------
+# ====================== LOGGING ======================
 async def log_key_gen(user_id, key, api_type):
     user = await get_user(user_id)
     text = (
@@ -331,19 +237,9 @@ async def log_key_gen(user_id, key, api_type):
     try: await application.bot.send_message(LOG_CHANNEL_ID, text, parse_mode='HTML')
     except Exception as e: logger.error(f"Log send failed: {e}")
 
-# ------------------------------------------------------------------
-# Command Handlers
-# ------------------------------------------------------------------
+# ====================== COMMAND HANDLERS ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; uid = user.id
-
-    # --- Cooldown: ignore duplicate start within 10 seconds ---
-    now = time.time()
-    last_start = context.user_data.get('last_start_time', 0)
-    if now - last_start < 10:
-        return  # silently ignore duplicate
-    context.user_data['last_start_time'] = now
-
     await update_user_info(uid, user.username, user.first_name, user.last_name)
     if context.args and context.args[0].startswith('ref_'):
         try:
@@ -367,17 +263,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     bal = await get_user_credits(uid)
-    text = f"💰 Credits: <b>{bal}</b>\n\n📦 <b>Your active subscriptions:</b>\n"
-    lines = []
-    for api, cfg in API_ENDPOINTS.items():
-        if not cfg.get('enabled', True): continue
-        active = await has_active_subscription(uid, api)
-        lines.append(f"🔸 {cfg['name']}: {'✅' if active else '❌'}")
-    text += '\n'.join(lines) if lines else "No subscriptions."
-    await update.message.reply_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("Buy Plan", callback_data="menu_balance")],
+    has_num = await has_active_subscription(uid, 'num')
+    has_tg = await has_active_subscription(uid, 'tg')
+    text = f"💰 Credits: <b>{bal}</b>\n📞 Num: {'✅' if has_num else '❌'}\n📱 TG: {'✅' if has_tg else '❌'}\n\nBuy plan:"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📞 Num Weekly (15)", callback_data="plan_num_weekly")],
+        [InlineKeyboardButton("📞 Num Monthly (30)", callback_data="plan_num_monthly")],
+        [InlineKeyboardButton("📱 TG Weekly (15)", callback_data="plan_tg_weekly")],
+        [InlineKeyboardButton("📱 TG Monthly (30)", callback_data="plan_tg_monthly")],
         [back_btn("menu_start")]
-    ]))
+    ])
+    await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb)
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await balance_command(update, context)
@@ -395,11 +291,21 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await is_admin(update.effective_user.id):
-        await update.message.reply_text("🛡️ Admin Panel", reply_markup=admin_panel_kb())
+    uid = update.effective_user.id
+    if await is_admin(uid): await update.message.reply_text("🛡️ Admin Panel", reply_markup=admin_panel_kb())
     else: await update.message.reply_text("Access denied.")
 
-# ====================== Callback Router ======================
+# ====================== CALLBACK HANDLERS ======================
+async def check_join_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    uid = update.effective_user.id
+    joined, missing = await check_force_join(uid)
+    if joined:
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE users SET joined_force_channels=TRUE WHERE user_id=$1", uid)
+        await q.edit_message_text("✅ Thank you! Press /start to see menu.")
+    else: await q.answer("Join all channels first.", show_alert=True)
+
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     data = q.data; uid = update.effective_user.id
@@ -432,6 +338,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("userlist_page_"): await paginated_user_list(update, context)
     elif data.startswith("premiumlist_page_"): await paginated_premium_list(update, context)
     elif data.startswith("adminlist_page_"): await paginated_admin_list(update, context)
+    elif data.startswith("keys_page_"): await paginated_keys_list(update, context)
     elif data.startswith("toggle_ban_"): await toggle_ban(update, context)
     elif data.startswith("add_credits_"): await add_credits_prompt(update, context)
     elif data.startswith("remove_premium_"): await remove_premium_handler(update, context)
@@ -442,148 +349,31 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("delete_key_"): await confirm_delete_key(update, context)
     elif data.startswith("confirm_delete_key_"): await execute_delete_key(update, context)
     elif data.startswith("bcast_"): await broadcast_type(update, context)
-    elif data.startswith("custkey_"): await custom_key_type_selected(update, context)
-    elif data.startswith("priceshow_"): await show_api_plans(update, context)
-    elif data.startswith("priceedit_"): await prompt_price_edit(update, context)
-    elif data == "admin_pricing": await admin_pricing_menu(update, context)
-    elif data == "admin_keys": await admin_keys_submenu(update, context)
-    elif data == "view_keys_paged": await view_keys_paged(update, context, page=0)
-    elif data.startswith("fullkeys_page_"):
-        page = int(data.split('_')[-1])
-        await view_keys_paged(update, context, page=page)
-    elif data == "export_keys_json": await export_keys_json(update, context)
     elif data == "check_join": await check_join_cb(update, context)
+    elif data == "admin_customkey": await custom_key_admin(update, context)
+    elif data.startswith("custkey_"): await custom_key_type_selected(update, context)
+    elif data == "admin_addpremium":
+        context.user_data['admin_state'] = 'awaiting_premium_user'
+        await q.edit_message_text("Send user ID to add premium:", reply_markup=InlineKeyboardMarkup([[back_btn("admin_premium")]]))
     else: await q.answer("Not implemented.", show_alert=True)
 
-# ------------------------------------------------------------------
-# Admin Submenus
-# ------------------------------------------------------------------
-async def admin_pricing_menu(update, context):
-    q = update.callback_query
-    kb = []
-    for api_type, cfg in API_ENDPOINTS.items():
-        if cfg.get('enabled', True):
-            kb.append([InlineKeyboardButton(cfg['name'], callback_data=f"priceshow_{api_type}")])
-    kb.append([back_btn("menu_admin")])
-    await q.edit_message_text("Select API to edit pricing:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def show_api_plans(update, context):
-    q = update.callback_query
-    api = q.data.split("_", 1)[1]
-    context.user_data['price_api'] = api
-    plans = await get_all_plans(api)
-    text = f"<b>Plans for {API_ENDPOINTS[api]['name']}</b>\n"
-    kb = []
-    for plan in plans:
-        name = plan['plan_name'].title()
-        price = plan['price_credits']
-        text += f"• {name}: {price} credits\n"
-        kb.append([InlineKeyboardButton(f"✏️ Edit {name}", callback_data=f"priceedit_{api}_{plan['plan_name']}")])
-    kb.append([back_btn("admin_pricing")])
-    await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-
-async def prompt_price_edit(update, context):
-    q = update.callback_query
-    _, api, plan_name = q.data.split("_", 2)
-    context.user_data['price_api'] = api
-    context.user_data['price_plan'] = plan_name
-    context.user_data['admin_state'] = 'awaiting_price_value'
-    await q.edit_message_text(f"Send new price (credits) for {api.upper()} {plan_name}:",
-                              reply_markup=InlineKeyboardMarkup([[back_btn("admin_pricing")]]))
-
-async def admin_keys_submenu(update, context):
-    q = update.callback_query
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 View Keys (Paginated)", callback_data="view_keys_paged")],
-        [InlineKeyboardButton("📥 Export All Keys (JSON)", callback_data="export_keys_json")],
-        [back_btn("menu_admin")]
-    ])
-    await q.edit_message_text("Manage API Keys:", reply_markup=kb)
-
-# ------------------------------------------------------------------
-# View Keys (Unmasked) & Export
-# ------------------------------------------------------------------
-async def view_keys_paged(update, context, page=0):
-    q = update.callback_query; await q.answer()
-    limit = 5; offset = page * limit
-    async with pool.acquire() as conn:
-        keys = await conn.fetch("""
-            SELECT key, created_by, expires_at, is_active, total_requests_allowed,
-                   requests_made, custom_name
-            FROM api_keys ORDER BY created_at DESC LIMIT $1 OFFSET $2
-        """, limit, offset)
-        total = await conn.fetchval("SELECT COUNT(*) FROM api_keys")
-    pages = max((total + limit - 1)//limit, 1)
-    text = f"🔑 <b>All Keys (Page {page+1}/{pages})</b>\n\n"
-    for k in keys:
-        status = "✅" if k['is_active'] else "❌"
-        req_info = ""
-        if k['total_requests_allowed'] is not None:
-            remaining = max(0, k['total_requests_allowed'] - k['requests_made'])
-            req_info = f" | Req: {remaining}/{k['total_requests_allowed']}"
-        else: req_info = " | Req: ∞"
-        text += (
-            f"{status} <code>{k['key']}</code>\n"
-            f"Owner: {k['created_by']} | Exp: {k['expires_at'].strftime('%Y-%m-%d')}{req_info}\n"
-            f"Name: {k['custom_name'] or 'N/A'}\n\n"
-        )
-    kb = []
-    nav = []
-    if page > 0: nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"fullkeys_page_{page-1}"))
-    if page < pages - 1: nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"fullkeys_page_{page+1}"))
-    if nav: kb.append(nav)
-    kb.append([InlineKeyboardButton("📥 Export All (JSON)", callback_data="export_keys_json")])
-    kb.append([back_btn("admin_keys")])
-    if len(text) > 4000:
-        text = f"⚠️ Text too long. Use Export button.\n" + text[:3800]
-    await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-
-async def export_keys_json(update, context):
-    q = update.callback_query; await q.answer()
-    async with pool.acquire() as conn:
-        keys = await conn.fetch("SELECT * FROM api_keys")
-    data = []
-    for row in keys:
-        data.append({
-            "key": row['key'],
-            "created_by": row['created_by'],
-            "created_at": row['created_at'].isoformat(),
-            "expires_at": row['expires_at'].isoformat(),
-            "rate_limit_per_min": row['rate_limit_per_min'],
-            "total_requests_allowed": row['total_requests_allowed'],
-            "requests_made": row['requests_made'],
-            "is_active": row['is_active'],
-            "custom_name": row['custom_name']
-        })
-    json_str = json.dumps(data, indent=2, ensure_ascii=False)
-    await context.bot.send_document(
-        chat_id=q.message.chat_id,
-        document=json_str.encode('utf-8'),
-        filename=f"api_keys_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json",
-        caption=f"Total keys: {len(data)}"
-    )
-    await q.edit_message_text(f"✅ Exported {len(data)} keys as JSON file.")
-
-# ------------------------------------------------------------------
-# Gen Key / Custom Key
-# ------------------------------------------------------------------
+# ====================== SUB MENUS ======================
 async def genkey_menu(update, context):
     q = update.callback_query; uid = update.effective_user.id
-    if not await is_admin(uid) and not await is_premium(uid) and not await has_any_subscription(uid):
-        await q.edit_message_text("❌ You need at least one active subscription.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
+    if not await is_admin(uid) and not (await has_active_subscription(uid, 'num') or await has_active_subscription(uid, 'tg')):
+        await q.edit_message_text("❌ No subscription.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
         return
-    kb = []
-    for api_type, cfg in API_ENDPOINTS.items():
-        if cfg.get('enabled', True):
-            kb.append([InlineKeyboardButton(cfg['name'], callback_data=f"gen_{api_type}")])
-    kb.append([back_btn("menu_start")])
-    await q.edit_message_text("Select API:", reply_markup=InlineKeyboardMarkup(kb))
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📞 Number Info", callback_data="gen_num"), InlineKeyboardButton("📱 Telegram", callback_data="gen_tg")],
+        [back_btn("menu_start")]
+    ])
+    await q.edit_message_text("Select API:", reply_markup=kb)
 
 async def gen_specific_key(update, context):
     q = update.callback_query; await q.answer()
     api_type = q.data.split('_')[1]; uid = update.effective_user.id
     if not await is_admin(uid) and not await has_active_subscription(uid, api_type):
-        await q.edit_message_text("❌ No active subscription for this API.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
+        await q.edit_message_text("❌ No subscription.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
         return
     key = await generate_random_key()
     await create_api_key(key, uid, expires_days=30, rate_limit=80, custom_name=f"{api_type.upper()}_Key")
@@ -597,32 +387,33 @@ async def gen_specific_key(update, context):
 
 async def custom_key_start(update, context):
     q = update.callback_query
-    kb = []
-    for api_type, cfg in API_ENDPOINTS.items():
-        if cfg.get('enabled', True):
-            kb.append([InlineKeyboardButton(cfg['name'], callback_data=f"custkey_{api_type}")])
-    kb.append([back_btn("menu_start")])
-    await q.edit_message_text("Select API for custom key:", reply_markup=InlineKeyboardMarkup(kb))
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📞 Number", callback_data="custkey_num"), InlineKeyboardButton("📱 TG", callback_data="custkey_tg")],
+        [back_btn("menu_start")]
+    ])
+    await q.edit_message_text("Select API for custom key:", reply_markup=kb)
 
 async def custom_key_type_selected(update, context):
     q = update.callback_query; await q.answer()
-    api = q.data.split('_', 1)[1]
-    context.user_data['custkey_api'] = api
+    api = q.data.split('_')[1]; context.user_data['custkey_api'] = api
     context.user_data['admin_state'] = 'awaiting_custom_key_string'
-    await q.edit_message_text("Send your desired API key:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_customkey")]]))
+    await q.edit_message_text("Send your desired API key (any non-empty string):", reply_markup=InlineKeyboardMarkup([[back_btn("menu_customkey")]]))
+
+async def custom_key_admin(update, context):
+    await custom_key_start(update, context)
 
 async def apihelp_menu(update, context):
     q = update.callback_query
     text = "📘 <b>API Docs</b>\n\n"
     for k, v in API_ENDPOINTS.items():
-        if not v.get('enabled', True): continue
         text += f"<b>{v['name']}</b>\n<code>{RENDER_EXTERNAL_URL}/api/v1/{k}?key=KEY&{v['param_name']}={v['param_example']}</code>\n\n"
     await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
 
 async def mykeys_menu(update, context):
     q = update.callback_query; uid = update.effective_user.id
     keys = await list_api_keys(uid)
-    text = "🔑 <b>Your Keys</b>\n\n"; kb = []
+    text = "🔑 <b>Your Keys</b>\n\n"
+    kb = []
     if not keys: text = "No keys found."
     else:
         for row in keys:
@@ -640,58 +431,53 @@ async def mykeys_menu(update, context):
 async def balance_menu(update, context):
     q = update.callback_query; uid = update.effective_user.id
     bal = await get_user_credits(uid)
-    text = f"💰 Credits: <b>{bal}</b>\n\n📦 <b>Your subscriptions:</b>\n"
-    lines = []; kb = []
-    for api, cfg in API_ENDPOINTS.items():
-        if not cfg.get('enabled', True): continue
-        active = await has_active_subscription(uid, api)
-        lines.append(f"🔸 {cfg['name']}: {'✅' if active else '❌'}")
-        kb.append([InlineKeyboardButton(f"{cfg['name']} Weekly", callback_data=f"plan_{api}_weekly"),
-                   InlineKeyboardButton("Monthly", callback_data=f"plan_{api}_monthly")])
-    text += '\n'.join(lines) if lines else "No subscriptions."
-    kb.append([back_btn("menu_start")])
-    await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+    has_num = await has_active_subscription(uid, 'num'); has_tg = await has_active_subscription(uid, 'tg')
+    text = f"💰 Credits: <b>{bal}</b>\n📞 Num: {'✅' if has_num else '❌'}\n📱 TG: {'✅' if has_tg else '❌'}\n\nBuy plan:"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📞 Num Weekly (15)", callback_data="plan_num_weekly")],
+        [InlineKeyboardButton("📞 Num Monthly (30)", callback_data="plan_num_monthly")],
+        [InlineKeyboardButton("📱 TG Weekly (15)", callback_data="plan_tg_weekly")],
+        [InlineKeyboardButton("📱 TG Monthly (30)", callback_data="plan_tg_monthly")],
+        [back_btn("menu_start")]
+    ])
+    await q.edit_message_text(text, parse_mode='HTML', reply_markup=kb)
 
 async def buy_plan(update, context):
     q = update.callback_query; await q.answer()
-    _, api, plan = q.data.split('_', 2); uid = update.effective_user.id
+    parts = q.data.split('_'); api_type=parts[1]; plan=parts[2]; uid=update.effective_user.id
     if await is_admin(uid):
-        pl = await get_plan(api, plan)
+        pl = await get_plan(api_type, plan)
         if pl:
             async with pool.acquire() as conn:
                 start = datetime.now(timezone.utc); end = start + timedelta(days=pl['duration_days'])
                 await conn.execute("INSERT INTO user_subscriptions (user_id, api_type, plan_id, start_date, end_date, is_active) VALUES ($1,$2,$3,$4,$5,TRUE)",
-                                   uid, api, pl['plan_id'], start, end)
+                                   uid, api_type, pl['plan_id'], start, end)
             await q.edit_message_text("✅ Admin plan activated.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
         else: await q.answer("Plan error.", show_alert=True)
         return
-    if not await has_active_subscription(uid, api):
-        pl = await get_plan(api, plan)
-        if not pl: await q.answer("Plan not found.", show_alert=True); return
-        bal = await get_user_credits(uid)
-        if bal < pl['price_credits']:
-            await q.answer(f"Need {pl['price_credits']} credits. Balance: {bal}.", show_alert=True); return
-        if await create_subscription(uid, api, plan):
-            await q.edit_message_text(f"✅ Purchased {api.upper()} {plan} plan!", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
-        else: await q.answer("Failed.", show_alert=True)
-    else: await q.answer("Already subscribed.", show_alert=True)
+    pl = await get_plan(api_type, plan)
+    if not pl: await q.answer("Plan not found.", show_alert=True); return
+    bal = await get_user_credits(uid)
+    if bal < pl['price_credits']: await q.answer(f"Need {pl['price_credits']} credits.", show_alert=True); return
+    if await create_subscription(uid, api_type, plan):
+        await q.edit_message_text(f"✅ Purchased {api_type.upper()} {plan} plan.", reply_markup=InlineKeyboardMarkup([[back_btn("menu_balance")]]))
+    else: await q.answer("Failed.", show_alert=True)
 
 async def referral_menu(update, context):
     q = update.callback_query; uid = update.effective_user.id
     me = await application.bot.get_me(); link = f"https://t.me/{me.username}?start=ref_{uid}"
-    await q.edit_message_text(f"🔗 Link:\n<code>{link}</code>\nEarn {REFERRAL_REWARD_CREDITS} credits.",
-                              parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
+    await q.edit_message_text(f"🔗 Link:\n<code>{link}</code>\nEarn {REFERRAL_REWARD_CREDITS} credits.", parse_mode='HTML',
+                              reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
 
 async def redeem_prompt(update, context):
     q = update.callback_query; context.user_data['awaiting_redeem'] = True
     await q.edit_message_text("Send redeem code:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_start")]]))
 
-# ------------------------------------------------------------------
-# Admin Panel Handlers
-# ------------------------------------------------------------------
+# ====================== ADMIN PANEL HANDLERS ======================
 async def admin_menu_handler(update, context):
     q = update.callback_query; data = q.data; await q.answer()
     if data == "admin_users": await show_user_list(update, context, 0)
+    elif data == "admin_keys": await show_keys_list(update, context, 0)
     elif data == "admin_addcredits":
         context.user_data['admin_state'] = 'awaiting_user_for_credits'
         await q.edit_message_text("Send user ID:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
@@ -711,7 +497,7 @@ async def admin_menu_handler(update, context):
         await q.edit_message_text("Send user ID:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
     elif data == "admin_bulkdm":
         context.user_data['admin_state'] = 'awaiting_bulkdm_ids'
-        await q.edit_message_text("Send comma-separated IDs:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
+        await q.edit_message_text("Send comma-separated IDs or text file:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
     elif data == "admin_broadcast":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Text", callback_data="bcast_text")],
@@ -721,17 +507,25 @@ async def admin_menu_handler(update, context):
             [back_btn("menu_admin")]
         ])
         await q.edit_message_text("Broadcast type:", reply_markup=kb)
-    elif data == "admin_customkey": await custom_key_start(update, context)
+    elif data == "admin_pricing":
+        context.user_data['admin_state'] = 'awaiting_pricing_api'
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Number API", callback_data="price_num")],
+            [InlineKeyboardButton("TG API", callback_data="price_tg")],
+            [back_btn("menu_admin")]
+        ])
+        await q.edit_message_text("Select API:", reply_markup=kb)
+    elif data.startswith("price_"):
+        api = data.split('_')[1]; context.user_data['pricing_api'] = api
+        context.user_data['admin_state'] = 'awaiting_pricing_plan'
+        await q.edit_message_text("Which plan? (weekly/monthly):", reply_markup=InlineKeyboardMarkup([[back_btn("admin_pricing")]]))
+    elif data == "admin_customkey": await custom_key_admin(update, context)
     elif data == "admin_addpremium":
         context.user_data['admin_state'] = 'awaiting_premium_user'
         await q.edit_message_text("Send user ID:", reply_markup=InlineKeyboardMarkup([[back_btn("admin_premium")]]))
-    elif data == "admin_pricing": await admin_pricing_menu(update, context)
-    elif data == "admin_keys": await admin_keys_submenu(update, context)
     else: await q.answer("Coming soon.", show_alert=True)
 
-# ------------------------------------------------------------------
-# Pagination Views (Users, Premium, Admins)
-# ------------------------------------------------------------------
+# ====================== PAGINATION VIEWS ======================
 async def show_user_list(update, context, page):
     q = update.callback_query; limit=10; offset=page*limit
     users = await get_users_paginated(offset, limit); total = await count_users()
@@ -809,9 +603,35 @@ async def show_admin_list(update, context, page):
 async def paginated_admin_list(update, context):
     page = int(update.callback_query.data.split('_')[-1]); await show_admin_list(update, context, page)
 
-# ------------------------------------------------------------------
-# Action Handlers
-# ------------------------------------------------------------------
+async def show_keys_list(update, context, page):
+    q = update.callback_query; limit=10; offset=page*limit
+    async with pool.acquire() as conn:
+        keys = await conn.fetch("SELECT key, created_by, expires_at, is_active, total_requests_allowed, requests_made FROM api_keys LIMIT $1 OFFSET $2", limit, offset)
+        total = await conn.fetchval("SELECT COUNT(*) FROM api_keys")
+    pages = max((total+limit-1)//limit, 1)
+    text = f"🔑 <b>All Keys (Page {page+1}/{pages})</b>\n\n"
+    kb = []
+    for k in keys:
+        status = "✅" if k['is_active'] else "❌"
+        req_info = ""
+        if k['total_requests_allowed'] is not None:
+            remaining = max(0, k['total_requests_allowed'] - k['requests_made'])
+            req_info = f" | Req: {remaining}/{k['total_requests_allowed']}"
+        else: req_info = " | Req: ∞"
+        text += f"{status} <code>{k['key'][:20]}...</code> Exp: {k['expires_at'].strftime('%Y-%m-%d')}{req_info}\n"
+        kb.append([InlineKeyboardButton(f"{'Deactivate' if k['is_active'] else 'Activate'}", callback_data=f"keytoggle_{k['key']}")])
+        kb.append([InlineKeyboardButton(f"🗑 Delete", callback_data=f"delete_key_{k['key']}")])
+    nav = []
+    if page>0: nav.append(InlineKeyboardButton("◀️", callback_data=f"keys_page_{page-1}"))
+    if page<pages-1: nav.append(InlineKeyboardButton("▶️", callback_data=f"keys_page_{page+1}"))
+    if nav: kb.append(nav)
+    kb.append([back_btn("menu_admin")])
+    await q.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+
+async def paginated_keys_list(update, context):
+    page = int(update.callback_query.data.split('_')[-1]); await show_keys_list(update, context, page)
+
+# ====================== ACTION HANDLERS ======================
 async def toggle_ban(update, context):
     q = update.callback_query; await q.answer()
     uid = int(q.data.split('_')[-1])
@@ -854,11 +674,9 @@ async def toggle_key_status(update, context):
         active = await conn.fetchval("SELECT is_active FROM api_keys WHERE key=$1", key)
     if active: await deactivate_api_key(key); await q.answer("Key deactivated.", show_alert=True)
     else: await activate_api_key(key); await q.answer("Key activated.", show_alert=True)
-    await view_keys_paged(update, context, 0)
+    await show_keys_list(update, context, 0)
 
-# ------------------------------------------------------------------
-# Delete Key
-# ------------------------------------------------------------------
+# ====================== DELETE KEY ======================
 async def confirm_delete_key(update, context):
     q = update.callback_query; await q.answer()
     key = q.data.split("delete_key_", 1)[1]
@@ -876,39 +694,26 @@ async def execute_delete_key(update, context):
         await conn.execute("DELETE FROM api_keys WHERE key=$1", key)
     await q.edit_message_text(f"✅ Key deleted: <code>{key[:20]}...</code>", parse_mode='HTML')
 
-# ------------------------------------------------------------------
-# Broadcast
-# ------------------------------------------------------------------
+# ====================== BROADCAST ======================
 async def broadcast_type(update, context):
     q = update.callback_query; btype = q.data.split('_')[1]
     context.user_data['broadcast_type'] = btype
     await q.edit_message_text(f"Send the {btype} to broadcast:", reply_markup=InlineKeyboardMarkup([[back_btn("menu_admin")]]))
 
-# ------------------------------------------------------------------
-# Text Message Handler (admin states)
-# ------------------------------------------------------------------
+# ====================== TEXT MESSAGE HANDLER ======================
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id; text = update.message.text.strip()
+
     if context.user_data.get('awaiting_redeem'):
         context.user_data.pop('awaiting_redeem')
         if await redeem_code(uid, text): await update.message.reply_text("✅ Redeemed!")
         else: await update.message.reply_text("❌ Invalid/expired code.")
         return
+
     if not await is_admin(uid): return
+
     state = context.user_data.get('admin_state')
     if not state: return
-
-    if state == 'awaiting_price_value':
-        try:
-            new_price = int(text)
-            api = context.user_data.pop('price_api')
-            plan = context.user_data.pop('price_plan')
-            async with pool.acquire() as conn:
-                await conn.execute("UPDATE api_plans SET price_credits=$1 WHERE api_type=$2 AND plan_name=$3", new_price, api, plan)
-            await update.message.reply_text(f"✅ Price updated: {api.upper()} {plan} = {new_price} credits.")
-        except: await update.message.reply_text("Invalid number.")
-        context.user_data.pop('admin_state', None)
-        return
 
     if state == 'awaiting_user_for_credits':
         try: target = int(text); context.user_data['target_user'] = target; context.user_data['admin_state'] = 'awaiting_credit_amount'; await update.message.reply_text("Amount:")
@@ -950,7 +755,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Sent to {success}/{len(ids)}."); context.user_data.pop('admin_state', None)
     elif state == 'awaiting_custom_key_string':
         key = text.strip()
-        if not key: await update.message.reply_text("Key cannot be empty."); return
+        if not key: await update.message.reply_text("Key cannot be empty. Send a valid key:"); return
         exists = await pool.fetchval("SELECT key FROM api_keys WHERE key=$1", key)
         if exists: await update.message.reply_text("Key already exists. Choose another."); return
         context.user_data['cust_key'] = key; context.user_data['admin_state'] = 'awaiting_custom_key_expiry'
@@ -960,13 +765,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             try:
                 days = int(text)
-                if days <= 0: await update.message.reply_text("Days must be positive."); return
+                if days <= 0: await update.message.reply_text("Days must be positive or type 'permanent'."); return
                 context.user_data['cust_expiry'] = days
-            except: await update.message.reply_text("Invalid number or 'permanent'."); return
+            except: await update.message.reply_text("Invalid number or type 'permanent'."); return
         context.user_data['admin_state'] = 'awaiting_custom_key_totalreq'
         await update.message.reply_text("Total requests allowed (0 for unlimited):")
     elif state == 'awaiting_custom_key_totalreq':
-        try: total = int(text); context.user_data['cust_total'] = total if total > 0 else None
+        try:
+            total = int(text); context.user_data['cust_total'] = total if total > 0 else None
         except: await update.message.reply_text("Invalid number."); return
         context.user_data['admin_state'] = 'awaiting_custom_key_ratelimit'
         await update.message.reply_text("Rate limit per minute:")
@@ -979,17 +785,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await log_key_gen(uid, context.user_data['cust_key'], context.user_data['custkey_api'])
         api_type = context.user_data['custkey_api']
         ex = API_ENDPOINTS[api_type]['param_example']
-        ep = f"{RENDER_EXTERNAL_URL}/api/v1/{api_type}?key={context.user_data['cust_key']}&{API_ENDPOINTS[api_type]['param_name']}={ex}"
+        param_name = API_ENDPOINTS[api_type]['param_name']
+        endpoint = f"{RENDER_EXTERNAL_URL}/api/v1/{api_type}?key={context.user_data['cust_key']}&{param_name}={ex}"
         await update.message.reply_text(
             f"✅ <b>Custom Key Created!</b>\n\n"
             f"🔑 <b>Key:</b> <code>{context.user_data['cust_key']}</code>\n"
-            f"📅 <b>Expiry:</b> {context.user_data['cust_expiry'] if expiry_days!=36500 else 'Permanent'} days\n"
+            f"📅 <b>Expiry:</b> {context.user_data['cust_expiry'] if expiry_days != 36500 else 'Permanent'} days\n"
             f"📊 <b>Requests:</b> {context.user_data['cust_total'] if context.user_data['cust_total'] else 'Unlimited'}\n"
             f"⚡ <b>Rate Limit:</b> {context.user_data['cust_rate']}/min\n\n"
-            f"🔗 <b>API Endpoint:</b>\n<code>{ep}</code>",
+            f"🔗 <b>API Endpoint:</b>\n<code>{endpoint}</code>",
             parse_mode='HTML'
         )
         context.user_data.pop('admin_state', None)
+    elif state == 'awaiting_pricing_api':
+        if text.lower() in ['num','tg']: context.user_data['pricing_api'] = text.lower(); context.user_data['admin_state'] = 'awaiting_pricing_plan'; await update.message.reply_text("Plan (weekly/monthly):")
+        else: await update.message.reply_text("Invalid API.")
+    elif state == 'awaiting_pricing_plan':
+        if text.lower() in ['weekly','monthly']: context.user_data['pricing_plan'] = text.lower(); context.user_data['admin_state'] = 'awaiting_pricing_credits'; await update.message.reply_text("New price (credits):")
+        else: await update.message.reply_text("Invalid plan.")
+    elif state == 'awaiting_pricing_credits':
+        try:
+            price = int(text); api = context.user_data.pop('pricing_api'); plan = context.user_data.pop('pricing_plan')
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE api_plans SET price_credits=$1 WHERE api_type=$2 AND plan_name=$3", price, api, plan)
+            await update.message.reply_text(f"✅ Updated {api.upper()} {plan} = {price} credits."); context.user_data.pop('admin_state', None)
+        except: await update.message.reply_text("Invalid number.")
     elif state == 'awaiting_premium_user':
         try: target = int(text); context.user_data['target_premium_user'] = target; context.user_data['admin_state'] = 'awaiting_premium_days'; await update.message.reply_text("Days (or 'permanent'):")
         except: await update.message.reply_text("Invalid ID.")
@@ -1001,9 +821,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: await update.message.reply_text("Invalid."); return
         await update.message.reply_text(f"✅ Premium set for {target}."); context.user_data.pop('admin_state', None)
 
-# ------------------------------------------------------------------
-# Media Broadcast
-# ------------------------------------------------------------------
+# ====================== MEDIA BROADCAST ======================
 async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update.effective_user.id): return
     btype = context.user_data.get('broadcast_type')
@@ -1024,22 +842,7 @@ async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.pop('broadcast_type', None)
     await update.message.reply_text(f"✅ Broadcast to {success}/{len(users)} users.")
 
-# ------------------------------------------------------------------
-# Check Join Callback
-# ------------------------------------------------------------------
-async def check_join_cb(update, context):
-    q = update.callback_query; await q.answer()
-    uid = update.effective_user.id
-    joined, missing = await check_force_join(uid)
-    if joined:
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE users SET joined_force_channels=TRUE WHERE user_id=$1", uid)
-        await q.edit_message_text("✅ Thank you! Press /start to see menu.")
-    else: await q.answer("Join all channels first.", show_alert=True)
-
-# ------------------------------------------------------------------
-# Background Tasks
-# ------------------------------------------------------------------
+# ====================== BACKGROUND TASKS ======================
 async def self_ping():
     await asyncio.sleep(10)
     while True:
@@ -1071,52 +874,28 @@ async def daily_backup():
             await application.bot.send_message(BACKUP_CHAT_ID, "✅ Daily backup complete.")
         except Exception as e: logger.error(f"Backup failed: {e}")
 
-# ------------------------------------------------------------------
-# Startup / Shutdown
-# ------------------------------------------------------------------
+# ====================== STARTUP / SHUTDOWN ======================
 async def on_startup():
-    global http_session, redis_client
+    global http_session
     await init_db()
-    global pool; pool = database.pool
-
-    # Redis
-    if REDIS_URL and REDIS_ENABLED:
-        try:
-            redis_client = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
-            await redis_client.ping()
-            logger.info("✅ Redis connected (ultra-fast mode)")
-        except Exception as e:
-            logger.warning(f"Redis connection failed: {e} – falling back to in-memory.")
-            redis_client = None
-    else:
-        logger.info("No Redis URL – using in-memory cache.")
-
-    # Sheets
-    init_sheets()
-
-    # HTTP session with connection pooling & DNS caching
-    http_session = aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=8),
-        connector=aiohttp.TCPConnector(limit=100, limit_per_host=30, ttl_dns_cache=300)
-    )
-
+    global pool; pool = database.pool   # <-- POOL FIX
+    init_sheets()                       # <-- INIT GOOGLE SHEETS
+    http_session = aiohttp.ClientSession()
     await application.initialize()
     await application.bot.set_my_commands([
         BotCommand("start", "Start bot"),
-        BotCommand("balance", "Check credits & subscriptions"),
+        BotCommand("balance", "Check credits"),
         BotCommand("buy", "Purchase subscription"),
         BotCommand("redeem", "Redeem code"),
         BotCommand("referral", "Referral link"),
         BotCommand("admin", "Admin panel")
     ])
-
     if BOT_MODE == "webhook":
         await application.bot.set_webhook(url=f"{RENDER_EXTERNAL_URL}/webhook", secret_token=WEBHOOK_SECRET)
         logger.info(f"Webhook set to {RENDER_EXTERNAL_URL}/webhook")
     else:
         asyncio.create_task(application.run_polling())
         logger.info("Polling started")
-
     asyncio.create_task(self_ping())
     asyncio.create_task(premium_expiry_check())
     asyncio.create_task(daily_backup())
@@ -1125,18 +904,14 @@ async def on_shutdown():
     if http_session: await http_session.close()
     await application.stop(); await application.shutdown()
     await close_db()
-    if redis_client: await redis_client.close()
 
-# ------------------------------------------------------------------
-# Handler Registration
-# ------------------------------------------------------------------
+# ====================== HANDLER REGISTRATION ======================
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("balance", balance_command))
 application.add_handler(CommandHandler("buy", buy_command))
 application.add_handler(CommandHandler("redeem", redeem_command))
 application.add_handler(CommandHandler("referral", referral_command))
 application.add_handler(CommandHandler("admin", admin_command))
-
 application.add_handler(CallbackQueryHandler(menu_router, pattern="^menu_"))
 application.add_handler(CallbackQueryHandler(admin_menu_handler, pattern="^admin_"))
 application.add_handler(CallbackQueryHandler(buy_plan, pattern="^plan_"))
@@ -1146,6 +921,7 @@ application.add_handler(CallbackQueryHandler(check_join_cb, pattern="^check_join
 application.add_handler(CallbackQueryHandler(paginated_user_list, pattern="^userlist_page_"))
 application.add_handler(CallbackQueryHandler(paginated_premium_list, pattern="^premiumlist_page_"))
 application.add_handler(CallbackQueryHandler(paginated_admin_list, pattern="^adminlist_page_"))
+application.add_handler(CallbackQueryHandler(paginated_keys_list, pattern="^keys_page_"))
 application.add_handler(CallbackQueryHandler(toggle_ban, pattern="^toggle_ban_"))
 application.add_handler(CallbackQueryHandler(add_credits_prompt, pattern="^add_credits_"))
 application.add_handler(CallbackQueryHandler(remove_premium_handler, pattern="^remove_premium_"))
@@ -1156,12 +932,6 @@ application.add_handler(CallbackQueryHandler(toggle_key_status, pattern="^keytog
 application.add_handler(CallbackQueryHandler(confirm_delete_key, pattern="^delete_key_"))
 application.add_handler(CallbackQueryHandler(execute_delete_key, pattern="^confirm_delete_key_"))
 application.add_handler(CallbackQueryHandler(custom_key_type_selected, pattern="^custkey_"))
-application.add_handler(CallbackQueryHandler(show_api_plans, pattern="^priceshow_"))
-application.add_handler(CallbackQueryHandler(prompt_price_edit, pattern="^priceedit_"))
-application.add_handler(CallbackQueryHandler(view_keys_paged, pattern="^view_keys_paged$"))
-application.add_handler(CallbackQueryHandler(export_keys_json, pattern="^export_keys_json$"))
-application.add_handler(CallbackQueryHandler(lambda u,c: view_keys_paged(u,c,int(u.callback_query.data.split('_')[-1])), pattern="^fullkeys_page_"))
-
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_broadcast_media))
 
@@ -1170,8 +940,6 @@ if __name__ == '__main__':
     from hypercorn.config import Config
     config = Config()
     config.bind = [f"0.0.0.0:{PORT}"]
-    config.graceful_timeout = 5
-    config.keep_alive_timeout = 30
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(on_startup())
